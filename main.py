@@ -903,15 +903,3 @@ with st.expander("📐 Technical Notes & Methodology"):
     **Productivity Loss Calculation**
     
     Based on empirical models from construction site studies:
-
-    Where:
-- PL = Productivity loss (%)
-- ΔPET = PET above work-specific alert level (°C)
-- k = Work type coefficient (0.15-0.30)
-""")
-
-st.markdown("""
-<div class="footer-text">
-🧠 Construction Heat Stress AI Assistant | Powered by LLM | Version 1.0
-</div>
-""", unsafe_allow_html=True)
