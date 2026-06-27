@@ -3,200 +3,226 @@ import pandas as pd
 import numpy as np
 import warnings
 import os
-import json
 import requests
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
+import hashlib
+from datetime import datetime
 warnings.filterwarnings('ignore')
 
 st.set_page_config(
-    page_title="Construction Heat Stress - AI Chat Assistant",
-    page_icon="🧠",
+    page_title="Heat Stress AI - Chat Assistant",
+    page_icon="🧬",
     layout="wide"
 )
 
 st.markdown("""
 <style>
     .stApp {
-        background: linear-gradient(145deg, #0f2027 0%, #203a43 50%, #2c5364 100%);
+        background: linear-gradient(145deg, #0a0a1a 0%, #1a1a3e 50%, #0d1b2a 100%);
     }
     .main-title {
         font-size: 2.8rem;
         font-weight: 700;
         text-align: center;
-        color: #ffffff;
-        padding: 1.5rem;
-        background: rgba(255,255,255,0.08);
-        backdrop-filter: blur(12px);
-        border-radius: 20px;
-        margin-bottom: 1.5rem;
-        border: 1px solid rgba(255,255,255,0.1);
-        box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+        background: linear-gradient(135deg, #4ECDC4, #44B39D);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        padding: 1rem 0;
+        letter-spacing: -1px;
     }
     .subtitle {
         text-align: center;
-        color: rgba(255,255,255,0.7);
+        color: rgba(255,255,255,0.6);
         font-size: 1rem;
-        margin-top: -1rem;
+        margin-top: -0.5rem;
         margin-bottom: 2rem;
-        font-style: italic;
     }
-    .chat-message {
+    .chat-container {
+        background: rgba(255,255,255,0.03);
+        border-radius: 20px;
+        border: 1px solid rgba(255,255,255,0.06);
+        padding: 1.5rem;
+        min-height: 400px;
+        max-height: 600px;
+        overflow-y: auto;
+    }
+    .chat-container::-webkit-scrollbar {
+        width: 6px;
+    }
+    .chat-container::-webkit-scrollbar-track {
+        background: rgba(255,255,255,0.05);
+        border-radius: 10px;
+    }
+    .chat-container::-webkit-scrollbar-thumb {
+        background: #4ECDC4;
+        border-radius: 10px;
+    }
+    .message {
+        margin: 1rem 0;
         padding: 1rem 1.2rem;
         border-radius: 12px;
-        margin: 0.5rem 0;
-        color: #ffffff;
-        line-height: 1.6;
+        animation: fadeIn 0.5s ease;
     }
-    .chat-message.user {
-        background: rgba(78,205,196,0.15);
-        border: 1px solid rgba(78,205,196,0.2);
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    .message.user {
+        background: rgba(78,205,196,0.1);
+        border: 1px solid rgba(78,205,196,0.15);
         margin-left: 2rem;
+        color: #ffffff;
     }
-    .chat-message.assistant {
-        background: rgba(255,255,255,0.05);
-        border: 1px solid rgba(255,255,255,0.1);
+    .message.assistant {
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.06);
         margin-right: 2rem;
+        color: #e0e0e0;
     }
-    .chat-message .role {
-        font-size: 0.8rem;
+    .message .role {
+        font-size: 0.75rem;
         font-weight: 600;
-        color: rgba(255,255,255,0.5);
+        letter-spacing: 0.5px;
         margin-bottom: 0.3rem;
     }
-    .chat-message .role.user-role {
+    .message.user .role {
         color: #4ECDC4;
     }
-    .chat-message .role.assistant-role {
+    .message.assistant .role {
         color: #FFD93D;
+    }
+    .message .content {
+        line-height: 1.7;
+        font-size: 0.95rem;
+    }
+    .message .content strong {
+        color: #4ECDC4;
+    }
+    .message .content ul, .message .content ol {
+        margin: 0.5rem 0;
+        padding-left: 1.5rem;
+    }
+    .message .content li {
+        margin: 0.3rem 0;
+    }
+    .input-area {
+        background: rgba(255,255,255,0.03);
+        border-radius: 16px;
+        border: 1px solid rgba(255,255,255,0.08);
+        padding: 0.5rem;
+        margin-top: 1rem;
     }
     .section-title {
-        font-size: 1.5rem;
+        font-size: 1.2rem;
         font-weight: 600;
         color: #ffffff;
-        padding: 0.6rem 1rem;
-        margin: 1.2rem 0 0.8rem 0;
-        background: rgba(255,255,255,0.05);
-        backdrop-filter: blur(5px);
-        border-radius: 12px;
-        border-left: 5px solid #4ECDC4;
-    }
-    .result-card {
-        background: rgba(255,255,255,0.07);
-        backdrop-filter: blur(8px);
-        padding: 1rem 1.2rem;
-        border-radius: 12px;
-        color: #ffffff;
-        border: 1px solid rgba(255,255,255,0.1);
-        margin: 0.4rem 0;
-        transition: 0.3s;
-    }
-    .result-card:hover {
-        background: rgba(255,255,255,0.12);
-        transform: translateY(-2px);
-    }
-    .result-label {
-        font-weight: 500;
-        color: rgba(255,255,255,0.8);
-        font-size: 0.85rem;
-    }
-    .result-value {
-        font-weight: 700;
-        color: #ffffff;
-        font-size: 1.2rem;
-    }
-    .result-value.high {
-        color: #FF6B6B;
-    }
-    .result-value.moderate {
-        color: #FFD93D;
-    }
-    .result-value.low {
-        color: #4ECDC4;
-    }
-    .status-box {
-        padding: 1.5rem;
-        border-radius: 16px;
-        text-align: center;
-        color: #ffffff;
-        margin: 0.8rem 0;
-        border: 1px solid rgba(255,255,255,0.15);
-        box-shadow: 0 6px 20px rgba(0,0,0,0.2);
-    }
-    .status-box.critical {
-        background: linear-gradient(135deg, #8B0000, #FF0000);
-    }
-    .status-box.high {
-        background: linear-gradient(135deg, #FF4500, #FF8C00);
-    }
-    .status-box.moderate {
-        background: linear-gradient(135deg, #FFA500, #FFD700);
-        color: #333;
-    }
-    .status-box.low {
-        background: linear-gradient(135deg, #006400, #228B22);
-    }
-    .status-box.comfortable {
-        background: linear-gradient(135deg, #1a472a, #2d7d46);
-    }
-    .metric-item {
-        background: rgba(255,255,255,0.06);
-        padding: 0.6rem 0.8rem;
+        padding: 0.4rem 0.8rem;
+        margin: 0.5rem 0;
+        background: rgba(255,255,255,0.03);
         border-radius: 8px;
+        border-left: 3px solid #4ECDC4;
+    }
+    .metric-card {
+        background: rgba(255,255,255,0.04);
+        padding: 0.8rem;
+        border-radius: 10px;
         text-align: center;
         border: 1px solid rgba(255,255,255,0.05);
+        transition: 0.3s;
     }
-    .metric-item .label {
-        font-size: 0.75rem;
-        color: rgba(255,255,255,0.7);
+    .metric-card:hover {
+        background: rgba(255,255,255,0.08);
+        transform: translateY(-2px);
+    }
+    .metric-card .label {
+        font-size: 0.7rem;
+        color: rgba(255,255,255,0.5);
         text-transform: uppercase;
         letter-spacing: 0.5px;
     }
-    .metric-item .value {
-        font-size: 1.4rem;
+    .metric-card .value {
+        font-size: 1.6rem;
         font-weight: 700;
         color: #ffffff;
         margin-top: 0.2rem;
     }
-    .divider {
-        border: none;
-        border-top: 1px solid rgba(255,255,255,0.1);
-        margin: 1.5rem 0;
+    .metric-card .value.high { color: #FF6B6B; }
+    .metric-card .value.moderate { color: #FFD93D; }
+    .metric-card .value.low { color: #4ECDC4; }
+    .status-badge {
+        display: inline-block;
+        padding: 0.3rem 1rem;
+        border-radius: 20px;
+        font-weight: 600;
+        font-size: 0.85rem;
     }
-    .footer-text {
+    .status-badge.critical { background: #8B0000; color: white; }
+    .status-badge.high { background: #DC3545; color: white; }
+    .status-badge.moderate { background: #FF8C00; color: white; }
+    .status-badge.low { background: #28A745; color: white; }
+    .status-badge.comfortable { background: #1a7a3a; color: white; }
+    .footer {
         text-align: center;
-        color: rgba(255,255,255,0.5);
-        font-size: 0.8rem;
+        color: rgba(255,255,255,0.3);
+        font-size: 0.75rem;
         margin-top: 2rem;
         padding-top: 1rem;
         border-top: 1px solid rgba(255,255,255,0.05);
     }
-    [data-testid="stSidebar"] {
-        background: linear-gradient(195deg, #1a2f3f 0%, #1e3a4a 100%);
-        border-right: 1px solid rgba(255,255,255,0.1);
-    }
-    [data-testid="stSidebar"] [data-testid="stMarkdown"] {
-        color: #ffffff;
-    }
     .stTextInput > div > div > input {
-        background: rgba(255,255,255,0.05);
-        color: #ffffff;
-        border: 1px solid rgba(255,255,255,0.1);
+        background: transparent !important;
+        color: #ffffff !important;
+        border: none !important;
+        padding: 0.8rem 1rem !important;
+        font-size: 0.95rem !important;
+    }
+    .stTextInput > div > div > input:focus {
+        box-shadow: none !important;
+        border-color: transparent !important;
+    }
+    .stTextInput > div > div > input::placeholder {
+        color: rgba(255,255,255,0.3);
     }
     .stButton > button {
-        background: linear-gradient(90deg, #0f2027, #203a43, #2c5364);
-        color: #ffffff;
-        border: 1px solid rgba(255,255,255,0.1);
-        border-radius: 10px;
-        padding: 0.6rem 1.2rem;
+        background: linear-gradient(135deg, #4ECDC4, #44B39D);
+        color: white;
+        border: none;
+        border-radius: 12px;
+        padding: 0.7rem 2rem;
         font-weight: 600;
         transition: 0.3s;
     }
     .stButton > button:hover {
-        background: linear-gradient(90deg, #1a3a47, #2a4a5a, #3a5a6a);
         transform: scale(1.02);
+        box-shadow: 0 4px 20px rgba(78,205,196,0.3);
+    }
+    .stButton > button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    [data-testid="stSidebar"] {
+        background: rgba(10,10,30,0.95);
+        border-right: 1px solid rgba(255,255,255,0.05);
+    }
+    [data-testid="stSidebar"] [data-testid="stMarkdown"] {
+        color: #ffffff;
+    }
+    .stNumberInput > div > div > input {
+        background: rgba(255,255,255,0.05);
+        color: #ffffff;
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 8px;
+    }
+    .stSlider > div > div {
+        color: #ffffff;
+    }
+    .stSelectSlider > div {
+        color: #ffffff;
     }
     .stExpander {
         background: rgba(255,255,255,0.03);
@@ -206,23 +232,35 @@ st.markdown("""
     .stExpander > div {
         color: #ffffff;
     }
+    .suggestion-chip {
+        display: inline-block;
+        background: rgba(78,205,196,0.1);
+        border: 1px solid rgba(78,205,196,0.15);
+        border-radius: 20px;
+        padding: 0.3rem 1rem;
+        margin: 0.2rem;
+        color: rgba(255,255,255,0.7);
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: 0.3s;
+    }
+    .suggestion-chip:hover {
+        background: rgba(78,205,196,0.2);
+        color: #ffffff;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 def create_sample_data():
     np.random.seed(42)
     n_samples = 500
-    
     T = np.random.uniform(20, 45, n_samples)
     RH = np.random.uniform(30, 90, n_samples)
     WS = np.random.uniform(0.1, 8, n_samples)
-    
     PET = T + 5 - 0.8 * WS + 0.015 * (RH - 40) + np.random.normal(0, 1, n_samples)
     PET = np.clip(PET, 20, 50)
-    
     PMV = 1.5 + (T - 25) * 0.12 - 0.15 * WS + 0.02 * (RH - 40) + np.random.normal(0, 0.2, n_samples)
     PMV = np.clip(PMV, 0, 4)
-    
     df = pd.DataFrame({
         'T': T, 'RH': RH, 'WS': WS, 'PET': PET, 'PMV': PMV,
         'PPD': 5 + 85 * (1 - np.exp(-0.5 * (PMV - 1))),
@@ -314,7 +352,6 @@ def calc_productivity_loss(pet_value, work_type_key, baseline):
     work = work_data[work_type_key]
     PET_AL = work["PET_AL"]
     base_factor = work["base_factor"]
-    
     if pet_value <= PET_AL:
         return 0
     else:
@@ -351,46 +388,36 @@ def get_pmv_interpretation(pmv):
 def get_height_profile(ground_pet, ground_pmv, height_m, bh_df):
     if len(bh_df) == 0:
         return None
-    
     heights_original = bh_df['Height(m)'].values
     pet_pattern = bh_df['PET(0C)'].values.copy()
     pmv_pattern = bh_df['PMV'].values.copy() if 'PMV' in bh_df.columns else pet_pattern * 0.08
-    
     for i in range(1, len(pet_pattern)):
         if pet_pattern[i] > pet_pattern[i-1]:
             pet_pattern[i] = max(pet_pattern[i-1] - 0.1, 0)
-    
     for i in range(1, len(pmv_pattern)):
         if pmv_pattern[i] > pmv_pattern[i-1]:
             pmv_pattern[i] = max(pmv_pattern[i-1] - 0.01, -3)
-    
     if pet_pattern[0] != 0:
         pet_relative = pet_pattern / pet_pattern[0]
     else:
         pet_relative = pet_pattern
-    
     if pmv_pattern[0] != 0:
         pmv_relative = pmv_pattern / pmv_pattern[0]
     else:
         pmv_relative = pmv_pattern
-    
     pet_profile = ground_pet * pet_relative
     pmv_profile = ground_pmv * pmv_relative
-    
     heights_smooth = np.linspace(0, 100, 100)
     pet_smooth = np.interp(heights_smooth, heights_original, pet_profile)
     pmv_smooth = np.interp(heights_smooth, heights_original, pmv_profile)
-    
     if 0 <= height_m <= 100:
         pet_at_height = np.interp(height_m, heights_smooth, pet_smooth)
         pmv_at_height = np.interp(height_m, heights_smooth, pmv_smooth)
     else:
         pet_at_height = ground_pet
         pmv_at_height = ground_pmv
-    
     pet_at_100 = np.interp(100, heights_smooth, pet_smooth)
     pmv_at_100 = np.interp(100, heights_smooth, pmv_smooth)
-    
     return {
         'pet_at_height': pet_at_height,
         'pmv_at_height': pmv_at_height,
@@ -404,16 +431,12 @@ def get_height_profile(ground_pet, ground_pmv, height_m, bh_df):
     }
 
 def call_llm_api(messages, api_key, api_type="openai"):
-    """Call LLM API with chat history"""
-    
     if not api_key:
         return None, "Please enter your API key in the sidebar"
-    
     try:
         if api_type == "openai":
             import openai
             client = openai.OpenAI(api_key=api_key)
-            
             response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=messages,
@@ -421,7 +444,6 @@ def call_llm_api(messages, api_key, api_type="openai"):
                 max_tokens=1000
             )
             return response.choices[0].message.content, None
-        
         elif api_type == "deepseek":
             headers = {
                 "Authorization": f"Bearer {api_key}",
@@ -442,56 +464,199 @@ def call_llm_api(messages, api_key, api_type="openai"):
             if response.status_code == 200:
                 return response.json()['choices'][0]['message']['content'], None
             else:
-                return None, f"API Error: {response.status_code} - {response.text}"
-        
+                return None, f"API Error: {response.status_code}"
         else:
             return None, "Unsupported API type"
-            
     except Exception as e:
         return None, f"Error: {str(e)}"
 
-st.markdown('<div class="main-title">🧠 Construction Heat Stress AI Chat Assistant</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Ask questions about heat stress, get AI-powered answers and guidance</div>', unsafe_allow_html=True)
+def create_risk_chart(pet, pmv, ppd, productivity_loss, height_profile):
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=("PET Risk Level", "PMV Comfort Scale", "PPD Distribution", "Productivity Impact"),
+        specs=[[{"type": "indicator"}, {"type": "indicator"}],
+               [{"type": "indicator"}, {"type": "indicator"}]]
+    )
+    
+    fig.add_trace(
+        go.Indicator(
+            mode="gauge+number+delta",
+            value=pet,
+            title={'text': "PET (°C)"},
+            domain={'x': [0, 1], 'y': [0, 1]},
+            gauge={
+                'axis': {'range': [20, 50], 'tickwidth': 1},
+                'bar': {'color': "#FF6B6B" if pet > 35 else "#FFD93D" if pet > 29 else "#4ECDC4"},
+                'steps': [
+                    {'range': [20, 23], 'color': "rgba(78,205,196,0.2)"},
+                    {'range': [23, 29], 'color': "rgba(78,205,196,0.3)"},
+                    {'range': [29, 35], 'color': "rgba(255,217,61,0.3)"},
+                    {'range': [35, 41], 'color': "rgba(255,107,107,0.3)"},
+                    {'range': [41, 50], 'color': "rgba(139,0,0,0.4)"}
+                ],
+                'threshold': {
+                    'line': {'color': "white", 'width': 4},
+                    'thickness': 0.75,
+                    'value': pet
+                }
+            }
+        ),
+        row=1, col=1
+    )
+    
+    fig.add_trace(
+        go.Indicator(
+            mode="gauge+number+delta",
+            value=pmv,
+            title={'text': "PMV"},
+            domain={'x': [0, 1], 'y': [0, 1]},
+            gauge={
+                'axis': {'range': [0, 3.5], 'tickwidth': 1},
+                'bar': {'color': "#FF6B6B" if pmv > 2.5 else "#FFD93D" if pmv > 1.5 else "#4ECDC4"},
+                'steps': [
+                    {'range': [0, 1], 'color': "rgba(78,205,196,0.2)"},
+                    {'range': [1, 1.5], 'color': "rgba(78,205,196,0.3)"},
+                    {'range': [1.5, 2.5], 'color': "rgba(255,217,61,0.3)"},
+                    {'range': [2.5, 3.5], 'color': "rgba(255,107,107,0.3)"}
+                ],
+                'threshold': {
+                    'line': {'color': "white", 'width': 4},
+                    'thickness': 0.75,
+                    'value': pmv
+                }
+            }
+        ),
+        row=1, col=2
+    )
+    
+    fig.add_trace(
+        go.Indicator(
+            mode="gauge+number+delta",
+            value=ppd,
+            title={'text': "PPD (%)"},
+            domain={'x': [0, 1], 'y': [0, 1]},
+            gauge={
+                'axis': {'range': [0, 100], 'tickwidth': 1},
+                'bar': {'color': "#FF6B6B" if ppd > 50 else "#FFD93D" if ppd > 25 else "#4ECDC4"},
+                'steps': [
+                    {'range': [0, 25], 'color': "rgba(78,205,196,0.2)"},
+                    {'range': [25, 50], 'color': "rgba(255,217,61,0.3)"},
+                    {'range': [50, 100], 'color': "rgba(255,107,107,0.3)"}
+                ],
+                'threshold': {
+                    'line': {'color': "white", 'width': 4},
+                    'thickness': 0.75,
+                    'value': ppd
+                }
+            }
+        ),
+        row=2, col=1
+    )
+    
+    fig.add_trace(
+        go.Indicator(
+            mode="gauge+number+delta",
+            value=productivity_loss,
+            title={'text': "Productivity Loss (%)"},
+            domain={'x': [0, 1], 'y': [0, 1]},
+            gauge={
+                'axis': {'range': [0, 30], 'tickwidth': 1},
+                'bar': {'color': "#FF6B6B" if productivity_loss > 20 else "#FFD93D" if productivity_loss > 10 else "#4ECDC4"},
+                'steps': [
+                    {'range': [0, 10], 'color': "rgba(78,205,196,0.2)"},
+                    {'range': [10, 20], 'color': "rgba(255,217,61,0.3)"},
+                    {'range': [20, 30], 'color': "rgba(255,107,107,0.3)"}
+                ],
+                'threshold': {
+                    'line': {'color': "white", 'width': 4},
+                    'thickness': 0.75,
+                    'value': productivity_loss
+                }
+            }
+        ),
+        row=2, col=2
+    )
+    
+    fig.update_layout(
+        template='plotly_dark',
+        height=600,
+        showlegend=False,
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='white')
+    )
+    
+    return fig
+
+def create_height_chart(height_profile, ground_pet):
+    if not height_profile:
+        return None
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatter(
+        x=height_profile['heights'],
+        y=height_profile['pet_profile'],
+        mode='lines',
+        name='PET Profile',
+        line=dict(color='#4ECDC4', width=3),
+        fill='tozeroy',
+        fillcolor='rgba(78,205,196,0.1)'
+    ))
+    
+    fig.add_hline(y=41, line_dash="dash", line_color="#FF6B6B", annotation_text="Critical (>41°C)")
+    fig.add_hline(y=35, line_dash="dash", line_color="#FF8C00", annotation_text="High (>35°C)")
+    fig.add_hline(y=29, line_dash="dash", line_color="#FFD93D", annotation_text="Moderate (>29°C)")
+    
+    fig.update_layout(
+        title="Vertical PET Profile",
+        xaxis_title="Height Above Ground (m)",
+        yaxis_title="PET (°C)",
+        template='plotly_dark',
+        height=400,
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='white'),
+        hovermode='x'
+    )
+    
+    return fig
+
+st.markdown('<div class="main-title">🧬 Heat Stress AI Assistant</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Turn your site data into actionable heat stress insights with AI-powered analysis</div>', unsafe_allow_html=True)
+
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
+if 'first_message' not in st.session_state:
+    st.session_state.first_message = True
 
 with st.sidebar:
     st.markdown("### ⚙️ Site Conditions")
     st.markdown("---")
     
-    st.markdown("#### 🌤️ Environmental Parameters")
-    T = st.number_input("Air Temperature (°C)", 20.0, 50.0, 34.0, 0.1)
-    RH = st.number_input("Relative Humidity (%)", 0.0, 100.0, 65.0, 1.0)
+    st.markdown("#### 🌤️ Environmental")
+    T = st.number_input("Temperature (°C)", 20.0, 50.0, 34.0, 0.1)
+    RH = st.number_input("Humidity (%)", 0.0, 100.0, 65.0, 1.0)
     WS = st.number_input("Wind Speed (m/s)", 0.0, 10.0, 1.5, 0.1)
     
     st.markdown("---")
-    st.markdown("#### 👷 Worker Factors")
-    clo = st.select_slider(
-        "Clothing Insulation (clo)",
-        options=[0.36, 0.50, 0.57, 0.61, 0.96, 1.00],
-        value=0.57
-    )
-    met = st.select_slider(
-        "Metabolic Rate (met)",
-        options=[2.1, 2.2, 2.6, 3.2, 3.8, 4.0],
-        value=3.2
-    )
+    st.markdown("#### 👷 Personal")
+    clo = st.select_slider("Clothing (clo)", options=[0.36, 0.50, 0.57, 0.61, 0.96, 1.00], value=0.57)
+    met = st.select_slider("Activity (met)", options=[2.1, 2.2, 2.6, 3.2, 3.8, 4.0], value=3.2)
+    height = st.slider("Working Height (m)", 0, 100, 0, 1)
     
     st.markdown("---")
-    st.markdown("#### 🏗️ Work Location")
-    height = st.slider("Working Height Above Ground (m)", 0, 100, 0, 1)
-    st.caption("PET decreases ~0.05-0.08°C per meter elevation")
-    
-    st.markdown("---")
-    st.markdown("#### 📊 Productivity Baseline")
+    st.markdown("#### 📊 Productivity")
     baseline_productivity = st.number_input("Baseline Output (units/hr)", min_value=1.0, value=100.0, step=5.0)
     
     st.markdown("---")
     st.markdown("#### 🤖 AI Configuration")
-    api_type = st.selectbox("API Provider", ["openai", "deepseek"], index=0)
+    api_type = st.selectbox("AI Provider", ["openai", "deepseek"], index=0)
     api_key = st.text_input("API Key", type="password", placeholder="Enter your API key")
     if api_key:
         st.session_state.api_key = api_key
     
-    if st.button("🔄 Calculate Results", use_container_width=True):
+    if st.button("🔄 Update Results", use_container_width=True):
         st.rerun()
 
 input_data = np.array([[T, RH, WS]])
@@ -523,277 +688,220 @@ predictions['PPD(%)'] = np.clip(predictions['PPD(%)'] + clo * 2 + (met - 2.0) * 
 
 ground_pet = predictions["PET(0C)"]
 ground_pmv = predictions["PMV"]
+ground_ppd = predictions['PPD(%)']
 
 height_profile = get_height_profile(ground_pet, ground_pmv, height, bh_df)
-
 risk_level, risk_desc, risk_icon, risk_class = get_thermal_risk_level(ground_pet)
 pmv_interpretation = get_pmv_interpretation(ground_pmv)
-
 current_work_key = activity_to_work.get(met, "Heavy (HW)")
 pet_effective = height_profile['pet_at_height'] if height_profile else ground_pet
 productivity_loss = calc_productivity_loss(pet_effective, current_work_key, baseline_productivity)
 
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    st.markdown(f"""
-    <div class="status-box {risk_class}">
-        <div style="font-size: 2.5rem; font-weight: 700;">
-            {risk_icon} {risk_level} RISK
-        </div>
-        <div style="font-size: 1.2rem; margin-top: 0.3rem;">
-            {risk_desc}
-        </div>
-        <div style="font-size: 1rem; margin-top: 0.5rem; opacity: 0.9;">
-            PET = {ground_pet:.1f}°C | PMV = {ground_pmv:.2f}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col2:
-    st.markdown(f"""
-    <div style="background:rgba(255,255,255,0.05); padding:1rem; border-radius:12px; text-align:center; border:1px solid rgba(255,255,255,0.1); height:100%; display:flex; flex-direction:column; justify-content:center;">
-        <div style="font-size:0.8rem; color:rgba(255,255,255,0.6);">Productivity Impact</div>
-        <div style="font-size:2rem; font-weight:700; color:{'#FF6B6B' if productivity_loss > 20 else '#FFD93D' if productivity_loss > 10 else '#4ECDC4'};">{productivity_loss:.1f}%</div>
-        <div style="font-size:0.8rem; color:rgba(255,255,255,0.5);">{current_work_key}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-st.markdown("---")
-
-st.markdown('<div class="section-title">📊 Thermal Exposure Indicators</div>', unsafe_allow_html=True)
-
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.markdown(f"""
-    <div class="metric-item">
+    <div class="metric-card">
         <div class="label">🌡️ PET</div>
-        <div class="value">{ground_pet:.1f}°C</div>
+        <div class="value {'high' if ground_pet > 35 else 'moderate' if ground_pet > 29 else 'low'}">{ground_pet:.1f}°C</div>
     </div>
     """, unsafe_allow_html=True)
 with col2:
     st.markdown(f"""
-    <div class="metric-item">
+    <div class="metric-card">
         <div class="label">📊 PMV</div>
-        <div class="value">{ground_pmv:.2f}</div>
+        <div class="value {'high' if ground_pmv > 2.5 else 'moderate' if ground_pmv > 1.5 else 'low'}">{ground_pmv:.2f}</div>
     </div>
     """, unsafe_allow_html=True)
 with col3:
     st.markdown(f"""
-    <div class="metric-item">
+    <div class="metric-card">
         <div class="label">😓 PPD</div>
-        <div class="value">{predictions['PPD(%)']:.1f}%</div>
+        <div class="value {'high' if ground_ppd > 50 else 'moderate' if ground_ppd > 25 else 'low'}">{ground_ppd:.1f}%</div>
     </div>
     """, unsafe_allow_html=True)
 with col4:
     st.markdown(f"""
-    <div class="metric-item">
-        <div class="label">🌬️ Wind</div>
-        <div class="value">{WS:.1f} m/s</div>
+    <div class="metric-card">
+        <div class="label">📉 Loss</div>
+        <div class="value {'high' if productivity_loss > 20 else 'moderate' if productivity_loss > 10 else 'low'}">{productivity_loss:.1f}%</div>
     </div>
     """, unsafe_allow_html=True)
 
-if height_profile:
-    st.markdown('<div class="section-title">🏗️ Height Impact</div>', unsafe_allow_html=True)
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown(f"""
-        <div class="result-card">
-            <div class="result-label">Ground Level (0m)</div>
-            <div class="result-value">{ground_pet:.1f}°C</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with col2:
-        st.markdown(f"""
-        <div class="result-card" style="border-color:#4ECDC4;">
-            <div class="result-label">Working Height ({height}m)</div>
-            <div class="result-value" style="color:#4ECDC4;">{height_profile['pet_at_height']:.1f}°C</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with col3:
-        st.markdown(f"""
-        <div class="result-card">
-            <div class="result-label">Reduction</div>
-            <div class="result-value" style="color:#FFD93D;">{height_profile['reduction']:.1f}°C</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-st.markdown("---")
-
-st.markdown('<div class="section-title">💬 AI Chat Assistant</div>', unsafe_allow_html=True)
-
-st.markdown("""
-<div style="background:rgba(255,255,255,0.05); padding:0.8rem 1rem; border-radius:8px; margin-bottom:1rem; color:rgba(255,255,255,0.7); font-size:0.9rem;">
-    💡 Ask questions about your heat stress results, get explanations, recommendations, and guidance from AI.
-    <br>Examples: "Why is my PET level so high?", "What should I do to reduce heat stress?", "How does humidity affect my risk?"
-</div>
-""", unsafe_allow_html=True)
-
-if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = []
-
-if not api_key:
-    st.warning("⚠️ Please enter your API key in the sidebar to use the AI chat assistant")
-
-user_question = st.text_input("Ask a question about your heat stress results:", placeholder="e.g., Why is my PET level so high?")
-
-col1, col2 = st.columns([1, 5])
-with col1:
-    ask_button = st.button("💬 Ask AI", use_container_width=True)
-with col2:
-    clear_button = st.button("🗑️ Clear Chat", use_container_width=True)
-
-if clear_button:
-    st.session_state.chat_history = []
-    st.rerun()
-
-if ask_button and user_question and api_key:
-    context = f"""
-    Site Conditions:
-    - Temperature: {T:.1f}°C
-    - Humidity: {RH:.0f}%
-    - Wind Speed: {WS:.1f} m/s
-    - Working Height: {height}m
-    - Clothing: {clo:.2f} clo
-    - Activity: {met:.1f} met ({current_work_key})
-    
-    Results:
-    - PET: {ground_pet:.1f}°C ({risk_level} risk - {risk_desc})
-    - PMV: {ground_pmv:.2f} ({pmv_interpretation})
-    - PPD: {predictions['PPD(%)']:.1f}%
-    - Productivity Loss: {productivity_loss:.1f}%
-    
-    Height Profile:
-    - Ground PET: {ground_pet:.1f}°C
-    - Working Height PET: {pet_effective:.1f}°C
-    - Temperature Reduction: {height_profile['reduction']:.1f}°C if height > 0 else 'N/A'
-    """
-    
-    system_message = """You are a construction heat stress safety expert. You provide clear, professional, and actionable answers about heat stress in construction. Use the provided site conditions and results to give specific, context-aware responses. Be practical and focus on safety recommendations."""
-    
-    messages = [
-        {"role": "system", "content": system_message},
-        {"role": "system", "content": f"Current Site Data: {context}"}
-    ]
-    
-    for msg in st.session_state.chat_history[-5:]:
-        messages.append({"role": msg["role"], "content": msg["content"]})
-    
-    messages.append({"role": "user", "content": user_question})
-    
-    with st.spinner("🧠 Thinking..."):
-        response, error = call_llm_api(messages, api_key, api_type)
-    
-    if response:
-        st.session_state.chat_history.append({"role": "user", "content": user_question})
-        st.session_state.chat_history.append({"role": "assistant", "content": response})
-    else:
-        st.error(f"Error: {error}")
-
-for msg in st.session_state.chat_history:
-    if msg["role"] == "user":
-        st.markdown(f"""
-        <div class="chat-message user">
-            <div class="role user-role">👤 You</div>
-            {msg["content"]}
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown(f"""
-        <div class="chat-message assistant">
-            <div class="role assistant-role">🧠 AI Assistant</div>
-            {msg["content"]}
-        </div>
-        """, unsafe_allow_html=True)
-
-if not st.session_state.chat_history:
-    st.info("💬 Ask a question above to get started with the AI chat assistant")
-
-st.markdown("---")
-
-st.markdown('<div class="section-title">🛡️ Quick Safety Guidance</div>', unsafe_allow_html=True)
-
-risk_level_effective, risk_desc_effective, _, risk_class_effective = get_thermal_risk_level(pet_effective)
-
-if risk_class_effective == "critical":
-    guidance = """
-    🔴 **EMERGENCY PROTOCOL — IMMEDIATE ACTION REQUIRED**
-    
-    • **Work Stoppage**: All non-essential outdoor construction activities must cease immediately
-    • **Worker Relocation**: Move all personnel to air-conditioned rest areas or shaded locations
-    • **Hydration Protocol**: Mandatory 250ml water intake every 15 minutes with electrolyte supplementation
-    • **Medical Monitoring**: Activate site heat stress response team; monitor for heat exhaustion symptoms
-    """
-elif risk_class_effective == "high":
-    guidance = f"""
-    🟠 **HIGH HEAT STRESS — ENHANCED PRECAUTIONS**
-    
-    • **Work-Rest Cycles**: 45-minute work / 15-minute rest in shaded areas
-    • **Cooling Measures**: Cooling vests, ice packs, and misting stations
-    • **Hydration**: 250ml water every 30 minutes with electrolytes
-    • **Monitoring**: Designate safety officer to monitor worker condition hourly
-    • **Height Strategy**: Utilize {height}m elevation for thermal relief
-    """
-elif risk_class_effective == "moderate":
-    guidance = f"""
-    🟡 **MODERATE HEAT STRESS — STANDARD PRECAUTIONS**
-    
-    • **Work-Rest Cycles**: 60-minute work / 10-minute rest in shaded areas
-    • **Hydration**: 250ml water every 45 minutes
-    • **Monitoring**: Regular observation for early signs of heat strain
-    • **Height Strategy**: Working at {height}m provides thermal reduction
-    """
-else:
-    guidance = f"""
-    🟢 **NORMAL OPERATIONS — ROUTINE MONITORING**
-    
-    • **Work Schedule**: Standard operations with regular breaks
-    • **Hydration**: Normal water intake (250ml per hour minimum)
-    • **Monitoring**: Continue routine safety observations
-    • **Best Practice**: Working at {height}m provides optimal conditions
-    """
-
 st.markdown(f"""
-<div style="background:rgba(255,255,255,0.05); padding:1rem; border-radius:12px; border-left:4px solid {'#FF0000' if risk_class_effective == 'critical' else '#FF8C00' if risk_class_effective == 'high' else '#FFD700' if risk_class_effective == 'moderate' else '#4ECDC4'}; color:#ffffff; line-height:1.8;">
-    {guidance}
+<div style="text-align:center; margin:0.5rem 0;">
+    <span class="status-badge {risk_class}">{risk_icon} {risk_level} - {risk_desc}</span>
+    <span style="color:rgba(255,255,255,0.4); margin-left:1rem;">|</span>
+    <span style="color:rgba(255,255,255,0.6); margin-left:1rem;">{pmv_interpretation}</span>
 </div>
 """, unsafe_allow_html=True)
 
-with st.expander("📐 Technical Notes & Methodology"):
+st.markdown("---")
+
+st.markdown('<div style="font-size:1.2rem; font-weight:600; color:#4ECDC4; margin:0.5rem 0;">💬 Ask anything about your heat stress results</div>', unsafe_allow_html=True)
+
+chat_container = st.container()
+
+with chat_container:
+    chat_html = f'<div class="chat-container">'
+    
+    if st.session_state.first_message:
+        chat_html += f'''
+        <div class="message assistant">
+            <div class="role">🧠 AI Assistant</div>
+            <div class="content">
+                <strong>Welcome to Heat Stress AI Assistant!</strong><br><br>
+                I can help you understand your heat stress results and provide guidance. Here's what I see:
+                <br><br>
+                • <strong>Current Risk Level:</strong> {risk_icon} {risk_level} - {risk_desc}
+                <br>
+                • <strong>PET:</strong> {ground_pet:.1f}°C (Threshold: 35°C for high risk)
+                <br>
+                • <strong>PMV:</strong> {ground_pmv:.2f} - {pmv_interpretation}
+                <br>
+                • <strong>Productivity Impact:</strong> {productivity_loss:.1f}% loss for {current_work_key}
+                <br><br>
+                <strong>Try asking:</strong>
+                <br>
+                • "Why is my PET level so high?"
+                <br>
+                • "What should I do to reduce heat stress?"
+                <br>
+                • "How does humidity affect my risk?"
+                <br>
+                • "What's the best work schedule for these conditions?"
+            </div>
+        </div>
+        '''
+    
+    for msg in st.session_state.chat_history:
+        role_class = "user" if msg["role"] == "user" else "assistant"
+        role_label = "👤 You" if msg["role"] == "user" else "🧠 AI Assistant"
+        chat_html += f'''
+        <div class="message {role_class}">
+            <div class="role">{role_label}</div>
+            <div class="content">{msg["content"]}</div>
+        </div>
+        '''
+    
+    chat_html += '</div>'
+    st.markdown(chat_html, unsafe_allow_html=True)
+
+col1, col2 = st.columns([5, 1])
+with col1:
+    user_question = st.text_input(
+        "Ask a question",
+        placeholder="e.g., Why is my PET level so high?",
+        label_visibility="collapsed",
+        key="user_input"
+    )
+with col2:
+    ask_button = st.button("Send", use_container_width=True)
+
+suggestions = [
+    "Why is my PET level so high?",
+    "What should I do to reduce heat stress?",
+    "How does humidity affect my risk?",
+    "What's the best work schedule?",
+    "Explain my productivity loss",
+    "How does height affect temperature?"
+]
+
+st.markdown('<div style="margin:0.5rem 0; display:flex; flex-wrap:wrap; gap:0.3rem;">', unsafe_allow_html=True)
+for suggestion in suggestions:
+    if st.button(suggestion, key=f"suggestion_{suggestion}", use_container_width=False):
+        user_question = suggestion
+        st.rerun()
+st.markdown('</div>', unsafe_allow_html=True)
+
+if ask_button and user_question:
+    if not api_key:
+        st.error("⚠️ Please enter your API key in the sidebar to use the AI assistant")
+    else:
+        context = f"""
+        Site Conditions:
+        - Temperature: {T:.1f}°C
+        - Humidity: {RH:.0f}%
+        - Wind Speed: {WS:.1f} m/s
+        - Working Height: {height}m
+        - Clothing: {clo:.2f} clo
+        - Activity: {met:.1f} met ({current_work_key})
+        
+        Results:
+        - PET: {ground_pet:.1f}°C ({risk_level} risk)
+        - PMV: {ground_pmv:.2f} ({pmv_interpretation})
+        - PPD: {ground_ppd:.1f}%
+        - Productivity Loss: {productivity_loss:.1f}% for {current_work_key}
+        """
+        
+        system_message = """You are a construction heat stress safety expert. Provide clear, professional, and actionable answers. Use the provided site data to give specific recommendations. Include practical guidance for site management and workers. Be concise but thorough."""
+        
+        messages = [
+            {"role": "system", "content": system_message},
+            {"role": "system", "content": f"Current Site Data: {context}"}
+        ]
+        
+        for msg in st.session_state.chat_history[-8:]:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+        
+        messages.append({"role": "user", "content": user_question})
+        
+        with st.spinner("🧠 Analyzing with AI..."):
+            response, error = call_llm_api(messages, api_key, api_type)
+        
+        if response:
+            st.session_state.chat_history.append({"role": "user", "content": user_question})
+            st.session_state.chat_history.append({"role": "assistant", "content": response})
+            st.session_state.first_message = False
+            st.rerun()
+        else:
+            st.error(f"Error: {error}")
+
+st.markdown("---")
+
+st.markdown('<div class="section-title">📊 Risk Visualization</div>', unsafe_allow_html=True)
+
+fig_risk = create_risk_chart(ground_pet, ground_pmv, ground_ppd, productivity_loss, height_profile)
+st.plotly_chart(fig_risk, use_container_width=True)
+
+if height_profile:
+    fig_height = create_height_chart(height_profile, ground_pet)
+    if fig_height:
+        st.plotly_chart(fig_height, use_container_width=True)
+
+with st.expander("📐 Understanding Your Results"):
     st.markdown("""
-    **Thermal Exposure Assessment Parameters**
+    ### How to Interpret Your Results
     
-    | Parameter | Description | Application |
-    |-----------|-------------|-------------|
-    | **PET** | Physiological Equivalent Temperature (°C) | Primary heat stress indicator |
-    | **PMV** | Predicted Mean Vote (0-3.5 scale) | Thermal comfort assessment |
-    | **PPD** | Predicted Percentage Dissatisfied (%) | Workforce thermal dissatisfaction |
+    **PET (Physiological Equivalent Temperature)**
+    - The temperature at which your body would feel the same thermal stress
+    - Higher PET = more heat stress on your body
     
-    **Heat Stress Risk Thresholds**
+    **Risk Levels:**
+    - **Critical (>41°C)**: Emergency - Stop all work immediately
+    - **High (35-41°C)**: Severe strain - 45 min work / 15 min rest
+    - **Moderate (29-35°C)**: Elevated stress - 60 min work / 10 min rest
+    - **Low (23-29°C)**: Mild stress - Standard precautions
+    - **Comfortable (<23°C)**: Optimal conditions - Normal operations
     
-    | PET Range | Risk Level | Work Restriction |
-    |-----------|------------|------------------|
-    | >41°C | Critical | Emergency — All work suspended |
-    | 35-41°C | High | 45-min work / 15-min rest |
-    | 29-35°C | Moderate | 60-min work / 10-min rest |
-    | 23-29°C | Low | Standard operations |
-    | <23°C | Comfortable | Normal operations |
+    **PMV (Predicted Mean Vote)**
+    - Measures thermal comfort on a scale of 0 (neutral) to 3.5 (very hot)
+    - Higher values indicate greater discomfort
     
-    **AI Chat Assistant**
+    **PPD (Predicted Percentage Dissatisfied)**
+    - Percentage of workers expected to feel uncomfortable
+    - Higher percentages indicate need for intervention
     
-    The AI chat assistant provides:
-    - **Explanations** of why certain risk levels exist
-    - **Recommendations** for reducing heat stress
-    - **Guidance** on specific site conditions
-    - **Answers** to any heat stress related questions
+    **Productivity Loss**
+    - Estimated reduction in work output due to heat stress
+    - Based on construction site empirical studies
     
-    Supported providers:
-    - OpenAI (GPT-3.5, GPT-4)
-    - DeepSeek
+    **Height Impact**
+    - PET decreases by 0.05-0.08°C per meter of elevation
+    - Working at higher levels provides natural cooling relief
     """)
 
 st.markdown("""
-<div class="footer-text">
-    🧠 Construction Heat Stress AI Chat Assistant | Version 1.0
+<div class="footer">
+    🧬 Heat Stress AI Assistant | Powered by AI | Version 1.0
 </div>
 """, unsafe_allow_html=True)
