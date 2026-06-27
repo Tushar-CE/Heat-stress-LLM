@@ -12,7 +12,7 @@ from sklearn.metrics import r2_score
 warnings.filterwarnings('ignore')
 
 st.set_page_config(
-    page_title="Construction Heat Stress - AI Assistant",
+    page_title="Construction Heat Stress - AI Chat Assistant",
     page_icon="🧠",
     layout="wide"
 )
@@ -42,6 +42,35 @@ st.markdown("""
         margin-top: -1rem;
         margin-bottom: 2rem;
         font-style: italic;
+    }
+    .chat-message {
+        padding: 1rem 1.2rem;
+        border-radius: 12px;
+        margin: 0.5rem 0;
+        color: #ffffff;
+        line-height: 1.6;
+    }
+    .chat-message.user {
+        background: rgba(78,205,196,0.15);
+        border: 1px solid rgba(78,205,196,0.2);
+        margin-left: 2rem;
+    }
+    .chat-message.assistant {
+        background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,255,255,0.1);
+        margin-right: 2rem;
+    }
+    .chat-message .role {
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: rgba(255,255,255,0.5);
+        margin-bottom: 0.3rem;
+    }
+    .chat-message .role.user-role {
+        color: #4ECDC4;
+    }
+    .chat-message .role.assistant-role {
+        color: #FFD93D;
     }
     .section-title {
         font-size: 1.5rem;
@@ -112,52 +141,6 @@ st.markdown("""
     .status-box.comfortable {
         background: linear-gradient(135deg, #1a472a, #2d7d46);
     }
-    .explanation-box {
-        background: rgba(255,255,255,0.05);
-        backdrop-filter: blur(8px);
-        padding: 1.2rem;
-        border-radius: 12px;
-        border: 1px solid rgba(255,255,255,0.1);
-        color: #ffffff;
-        margin: 0.8rem 0;
-        line-height: 1.8;
-    }
-    .explanation-box h4 {
-        color: #4ECDC4;
-        margin-top: 0.5rem;
-        margin-bottom: 0.5rem;
-    }
-    .explanation-box ul {
-        margin: 0.5rem 0;
-        padding-left: 1.5rem;
-    }
-    .explanation-box li {
-        margin: 0.3rem 0;
-    }
-    .factor-card {
-        background: rgba(255,255,255,0.05);
-        backdrop-filter: blur(8px);
-        padding: 1rem;
-        border-radius: 12px;
-        border: 1px solid rgba(255,255,255,0.08);
-        margin: 0.5rem 0;
-        color: #ffffff;
-    }
-    .factor-card .factor-name {
-        font-weight: 600;
-        color: #4ECDC4;
-        font-size: 1.05rem;
-    }
-    .factor-card .factor-impact {
-        font-size: 0.9rem;
-        margin-top: 0.3rem;
-        color: rgba(255,255,255,0.8);
-    }
-    .factor-card .factor-detail {
-        font-size: 0.85rem;
-        color: rgba(255,255,255,0.6);
-        margin-top: 0.2rem;
-    }
     .metric-item {
         background: rgba(255,255,255,0.06);
         padding: 0.6rem 0.8rem;
@@ -176,48 +159,6 @@ st.markdown("""
         font-weight: 700;
         color: #ffffff;
         margin-top: 0.2rem;
-    }
-    .guidance-box {
-        background: rgba(255,255,255,0.05);
-        backdrop-filter: blur(8px);
-        padding: 1.2rem;
-        border-radius: 12px;
-        border-left: 4px solid #4ECDC4;
-        color: #ffffff;
-        font-size: 0.95rem;
-        line-height: 1.8;
-    }
-    .guidance-box.critical {
-        border-left-color: #FF0000;
-        background: rgba(255,0,0,0.08);
-    }
-    .guidance-box.high {
-        border-left-color: #FF8C00;
-        background: rgba(255,140,0,0.08);
-    }
-    .guidance-box.moderate {
-        border-left-color: #FFD700;
-        background: rgba(255,215,0,0.08);
-    }
-    .guidance-box.low {
-        border-left-color: #4ECDC4;
-        background: rgba(78,205,196,0.08);
-    }
-    .llm-response {
-        background: rgba(78,205,196,0.05);
-        border: 1px solid rgba(78,205,196,0.2);
-        border-radius: 12px;
-        padding: 1.2rem;
-        margin: 0.8rem 0;
-        color: #ffffff;
-        line-height: 1.8;
-    }
-    .llm-response h3 {
-        color: #4ECDC4;
-        margin-top: 0;
-    }
-    .llm-response strong {
-        color: #FFD93D;
     }
     .divider {
         border: none;
@@ -239,16 +180,10 @@ st.markdown("""
     [data-testid="stSidebar"] [data-testid="stMarkdown"] {
         color: #ffffff;
     }
-    .stNumberInput > div > div > input {
+    .stTextInput > div > div > input {
         background: rgba(255,255,255,0.05);
         color: #ffffff;
         border: 1px solid rgba(255,255,255,0.1);
-    }
-    .stSlider > div > div {
-        color: #ffffff;
-    }
-    .stSelectSlider > div {
-        color: #ffffff;
     }
     .stButton > button {
         background: linear-gradient(90deg, #0f2027, #203a43, #2c5364);
@@ -270,13 +205,6 @@ st.markdown("""
     }
     .stExpander > div {
         color: #ffffff;
-    }
-    .stSpinner > div {
-        border-color: #4ECDC4 !important;
-    }
-    .stAlert {
-        background: rgba(255,255,255,0.05) !important;
-        color: #ffffff !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -475,92 +403,8 @@ def get_height_profile(ground_pet, ground_pmv, height_m, bh_df):
         'lapse_rate': (ground_pet - pet_at_100) / 100 if height_m > 0 else 0
     }
 
-def generate_llm_explanation(T, RH, WS, clo, met, height, ground_pet, ground_pmv, risk_level, risk_desc, pmv_interpretation, productivity_loss, current_work_key, height_profile):
-    """Generate comprehensive explanation using LLM"""
-    
-    # Prepare context data
-    pet_at_height = height_profile['pet_at_height'] if height_profile else ground_pet
-    reduction = height_profile['reduction'] if height_profile else 0
-    
-    # Determine primary contributing factors
-    factors = []
-    if T > 35:
-        factors.append(f"High ambient temperature ({T:.1f}°C) is the primary driver of heat stress")
-    elif T > 30:
-        factors.append(f"Elevated temperature ({T:.1f}°C) contributes significantly to thermal load")
-    else:
-        factors.append(f"Moderate temperature ({T:.1f}°C) is manageable")
-    
-    if RH > 70:
-        factors.append(f"High humidity ({RH:.0f}%) reduces evaporative cooling effectiveness")
-    elif RH > 60:
-        factors.append(f"Moderate humidity ({RH:.0f}%) somewhat reduces sweat evaporation")
-    
-    if WS < 1.0:
-        factors.append(f"Low wind speed ({WS:.1f} m/s) limits convective heat dissipation")
-    elif WS > 3.0:
-        factors.append(f"Good air movement ({WS:.1f} m/s) enhances cooling")
-    
-    if clo > 0.8:
-        factors.append(f"Heavy clothing ({clo:.2f} clo) traps body heat")
-    elif clo < 0.5:
-        factors.append(f"Light clothing ({clo:.2f} clo) allows better heat dissipation")
-    
-    if met > 3.5:
-        factors.append(f"High metabolic activity ({met:.1f} met) generates significant internal heat")
-    elif met > 2.8:
-        factors.append(f"Moderate work intensity ({met:.1f} met) produces substantial metabolic heat")
-    
-    if height > 20:
-        factors.append(f"Working at {height}m elevation provides {reduction:.1f}°C thermal relief")
-    elif height > 0:
-        factors.append(f"Working at {height}m provides minimal thermal benefit")
-    
-    if productivity_loss > 20:
-        factors.append(f"Severe productivity loss ({productivity_loss:.1f}%) indicates critical heat strain")
-    elif productivity_loss > 10:
-        factors.append(f"Noticeable productivity impact ({productivity_loss:.1f}%) from heat exposure")
-    
-    # Prepare for LLM API call
-    system_prompt = """You are a construction safety expert specializing in heat stress management. 
-    Provide clear, professional explanations about heat stress risk factors and actionable guidance.
-    Use bullet points for readability. Be specific and practical."""
-    
-    user_prompt = f"""Analyze this construction site heat stress scenario and provide a comprehensive explanation:
-
-**Site Conditions:**
-- Temperature: {T:.1f}°C
-- Humidity: {RH:.0f}%
-- Wind Speed: {WS:.1f} m/s
-- Working Height: {height}m
-- Clothing: {clo:.2f} clo
-- Activity: {met:.1f} met ({current_work_key})
-
-**Results:**
-- PET: {ground_pet:.1f}°C ({risk_level} risk - {risk_desc})
-- PMV: {ground_pmv:.2f} ({pmv_interpretation})
-- Productivity Loss: {productivity_loss:.1f}%
-
-**Key Factors Identified:**
-{chr(10).join(['- ' + f for f in factors])}
-
-Please provide:
-
-1. **WHY this risk level exists** - Explain the combination of factors causing this heat stress level
-2. **WHAT factors matter most** - Rank and explain the top 3 most critical factors
-3. **HOW to address each factor** - Specific, actionable recommendations for each factor
-4. **PRACTICAL guidance** for site management and workers
-
-Keep the explanation professional, specific to construction, and actionable. Use bullet points."""
-    
-    return system_prompt, user_prompt, factors
-
-def call_llm_api(system_prompt, user_prompt, api_key=None, api_type="openai"):
-    """Call LLM API with error handling"""
-    
-    # Check for API key in session state or environment
-    if api_key is None:
-        api_key = st.session_state.get('api_key', os.environ.get('OPENAI_API_KEY', ''))
+def call_llm_api(messages, api_key, api_type="openai"):
+    """Call LLM API with chat history"""
     
     if not api_key:
         return None, "Please enter your API key in the sidebar"
@@ -572,10 +416,7 @@ def call_llm_api(system_prompt, user_prompt, api_key=None, api_type="openai"):
             
             response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
+                messages=messages,
                 temperature=0.7,
                 max_tokens=1000
             )
@@ -588,10 +429,7 @@ def call_llm_api(system_prompt, user_prompt, api_key=None, api_type="openai"):
             }
             data = {
                 "model": "deepseek-chat",
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
+                "messages": messages,
                 "temperature": 0.7,
                 "max_tokens": 1000
             }
@@ -612,8 +450,8 @@ def call_llm_api(system_prompt, user_prompt, api_key=None, api_type="openai"):
     except Exception as e:
         return None, f"Error: {str(e)}"
 
-st.markdown('<div class="main-title">🧠 Construction Heat Stress - AI Assistant</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Get detailed explanations and guidance from AI about your heat stress risk</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">🧠 Construction Heat Stress AI Chat Assistant</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Ask questions about heat stress, get AI-powered answers and guidance</div>', unsafe_allow_html=True)
 
 with st.sidebar:
     st.markdown("### ⚙️ Site Conditions")
@@ -648,15 +486,12 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("#### 🤖 AI Configuration")
-    api_type = st.selectbox("API Type", ["openai", "deepseek"], index=0)
+    api_type = st.selectbox("API Provider", ["openai", "deepseek"], index=0)
     api_key = st.text_input("API Key", type="password", placeholder="Enter your API key")
     if api_key:
         st.session_state.api_key = api_key
     
-    use_llm = st.checkbox("Enable AI Explanations", value=True)
-    
-    st.markdown("---")
-    if st.button("🔄 Analyze with AI", use_container_width=True):
+    if st.button("🔄 Calculate Results", use_container_width=True):
         st.rerun()
 
 input_data = np.array([[T, RH, WS]])
@@ -785,36 +620,98 @@ if height_profile:
 
 st.markdown("---")
 
-if use_llm:
-    st.markdown('<div class="section-title">🧠 AI Explanation & Guidance</div>', unsafe_allow_html=True)
-    
-    if not api_key:
-        st.warning("⚠️ Please enter your API key in the sidebar to use AI explanations")
-    else:
-        with st.spinner("🧠 Generating AI explanation..."):
-            system_prompt, user_prompt, factors = generate_llm_explanation(
-                T, RH, WS, clo, met, height, ground_pet, ground_pmv, 
-                risk_level, risk_desc, pmv_interpretation, productivity_loss, 
-                current_work_key, height_profile
-            )
-            
-            explanation, error = call_llm_api(system_prompt, user_prompt, api_key, api_type)
-            
-            if explanation:
-                st.markdown(f"""
-                <div class="llm-response">
-                    {explanation}
-                </div>
-                """, unsafe_allow_html=True)
-                
-                with st.expander("📋 View Key Factors Identified"):
-                    for i, f in enumerate(factors, 1):
-                        st.markdown(f"**{i}.** {f}")
-            else:
-                st.error(f"AI Error: {error}")
-                st.info("💡 You can still use the standard guidance below")
+st.markdown('<div class="section-title">💬 AI Chat Assistant</div>', unsafe_allow_html=True)
 
-st.markdown('<div class="section-title">🛡️ Standard Safety Guidance</div>', unsafe_allow_html=True)
+st.markdown("""
+<div style="background:rgba(255,255,255,0.05); padding:0.8rem 1rem; border-radius:8px; margin-bottom:1rem; color:rgba(255,255,255,0.7); font-size:0.9rem;">
+    💡 Ask questions about your heat stress results, get explanations, recommendations, and guidance from AI.
+    <br>Examples: "Why is my PET level so high?", "What should I do to reduce heat stress?", "How does humidity affect my risk?"
+</div>
+""", unsafe_allow_html=True)
+
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
+
+if not api_key:
+    st.warning("⚠️ Please enter your API key in the sidebar to use the AI chat assistant")
+
+user_question = st.text_input("Ask a question about your heat stress results:", placeholder="e.g., Why is my PET level so high?")
+
+col1, col2 = st.columns([1, 5])
+with col1:
+    ask_button = st.button("💬 Ask AI", use_container_width=True)
+with col2:
+    clear_button = st.button("🗑️ Clear Chat", use_container_width=True)
+
+if clear_button:
+    st.session_state.chat_history = []
+    st.rerun()
+
+if ask_button and user_question and api_key:
+    context = f"""
+    Site Conditions:
+    - Temperature: {T:.1f}°C
+    - Humidity: {RH:.0f}%
+    - Wind Speed: {WS:.1f} m/s
+    - Working Height: {height}m
+    - Clothing: {clo:.2f} clo
+    - Activity: {met:.1f} met ({current_work_key})
+    
+    Results:
+    - PET: {ground_pet:.1f}°C ({risk_level} risk - {risk_desc})
+    - PMV: {ground_pmv:.2f} ({pmv_interpretation})
+    - PPD: {predictions['PPD(%)']:.1f}%
+    - Productivity Loss: {productivity_loss:.1f}%
+    
+    Height Profile:
+    - Ground PET: {ground_pet:.1f}°C
+    - Working Height PET: {pet_effective:.1f}°C
+    - Temperature Reduction: {height_profile['reduction']:.1f}°C if height > 0 else 'N/A'
+    """
+    
+    system_message = """You are a construction heat stress safety expert. You provide clear, professional, and actionable answers about heat stress in construction. Use the provided site conditions and results to give specific, context-aware responses. Be practical and focus on safety recommendations."""
+    
+    messages = [
+        {"role": "system", "content": system_message},
+        {"role": "system", "content": f"Current Site Data: {context}"}
+    ]
+    
+    for msg in st.session_state.chat_history[-5:]:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+    
+    messages.append({"role": "user", "content": user_question})
+    
+    with st.spinner("🧠 Thinking..."):
+        response, error = call_llm_api(messages, api_key, api_type)
+    
+    if response:
+        st.session_state.chat_history.append({"role": "user", "content": user_question})
+        st.session_state.chat_history.append({"role": "assistant", "content": response})
+    else:
+        st.error(f"Error: {error}")
+
+for msg in st.session_state.chat_history:
+    if msg["role"] == "user":
+        st.markdown(f"""
+        <div class="chat-message user">
+            <div class="role user-role">👤 You</div>
+            {msg["content"]}
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div class="chat-message assistant">
+            <div class="role assistant-role">🧠 AI Assistant</div>
+            {msg["content"]}
+        </div>
+        """, unsafe_allow_html=True)
+
+if not st.session_state.chat_history:
+    st.info("💬 Ask a question above to get started with the AI chat assistant")
+
+st.markdown("---")
+
+st.markdown('<div class="section-title">🛡️ Quick Safety Guidance</div>', unsafe_allow_html=True)
 
 risk_level_effective, risk_desc_effective, _, risk_class_effective = get_thermal_risk_level(pet_effective)
 
@@ -826,44 +723,38 @@ if risk_class_effective == "critical":
     • **Worker Relocation**: Move all personnel to air-conditioned rest areas or shaded locations
     • **Hydration Protocol**: Mandatory 250ml water intake every 15 minutes with electrolyte supplementation
     • **Medical Monitoring**: Activate site heat stress response team; monitor for heat exhaustion symptoms
-    • **High-Risk Workers**: Prioritize medical evaluation for workers with pre-existing conditions
-    • **Resumption Criteria**: Only resume work when PET drops below 35°C with adequate cooling measures
     """
 elif risk_class_effective == "high":
     guidance = f"""
     🟠 **HIGH HEAT STRESS — ENHANCED PRECAUTIONS**
     
-    • **Work-Rest Cycles**: Implement 45-minute work / 15-minute rest rotation in shaded areas
-    • **Cooling Measures**: Provide cooling vests, ice packs, and misting stations at work locations
-    • **Hydration**: 250ml water every 30 minutes; electrolyte drinks recommended for heavy work
-    • **Monitoring**: Designate safety officer to monitor worker condition and PET levels hourly
-    • **Work Modifications**: Schedule heavy work (VHW, HW) during cooler morning/evening hours
-    • **Height Consideration**: Utilize {height}m elevation for thermal relief
+    • **Work-Rest Cycles**: 45-minute work / 15-minute rest in shaded areas
+    • **Cooling Measures**: Cooling vests, ice packs, and misting stations
+    • **Hydration**: 250ml water every 30 minutes with electrolytes
+    • **Monitoring**: Designate safety officer to monitor worker condition hourly
+    • **Height Strategy**: Utilize {height}m elevation for thermal relief
     """
 elif risk_class_effective == "moderate":
     guidance = f"""
     🟡 **MODERATE HEAT STRESS — STANDARD PRECAUTIONS**
     
-    • **Work-Rest Cycles**: 60-minute work / 10-minute rest in shaded areas for moderate activities
-    • **Hydration**: 250ml water every 45 minutes; standard electrolyte availability
-    • **Monitoring**: Regular observation of workers for early signs of heat strain
-    • **Work Scheduling**: Continue normal operations with increased vigilance
-    • **Cooling**: Ensure adequate shade and ventilation at all workstations
-    • **Height Strategy**: Working at {height}m provides thermal reduction — consider vertical work positioning
+    • **Work-Rest Cycles**: 60-minute work / 10-minute rest in shaded areas
+    • **Hydration**: 250ml water every 45 minutes
+    • **Monitoring**: Regular observation for early signs of heat strain
+    • **Height Strategy**: Working at {height}m provides thermal reduction
     """
 else:
     guidance = f"""
     🟢 **NORMAL OPERATIONS — ROUTINE MONITORING**
     
-    • **Work Schedule**: Standard work operations with regular breaks
-    • **Hydration**: Maintain normal water intake (250ml per hour minimum)
+    • **Work Schedule**: Standard operations with regular breaks
+    • **Hydration**: Normal water intake (250ml per hour minimum)
     • **Monitoring**: Continue routine safety observations
-    • **Preparation**: Maintain readiness for temperature increases during peak hours
-    • **Best Practice**: Working at {height}m provides optimal thermal conditions
+    • **Best Practice**: Working at {height}m provides optimal conditions
     """
 
 st.markdown(f"""
-<div class="guidance-box {risk_class_effective}">
+<div style="background:rgba(255,255,255,0.05); padding:1rem; border-radius:12px; border-left:4px solid {'#FF0000' if risk_class_effective == 'critical' else '#FF8C00' if risk_class_effective == 'high' else '#FFD700' if risk_class_effective == 'moderate' else '#4ECDC4'}; color:#ffffff; line-height:1.8;">
     {guidance}
 </div>
 """, unsafe_allow_html=True)
@@ -874,9 +765,9 @@ with st.expander("📐 Technical Notes & Methodology"):
     
     | Parameter | Description | Application |
     |-----------|-------------|-------------|
-    | **PET** | Physiological Equivalent Temperature (°C) | Primary heat stress indicator representing thermal sensation |
-    | **PMV** | Predicted Mean Vote (0-3.5 scale) | Thermal comfort assessment for construction workers |
-    | **PPD** | Predicted Percentage Dissatisfied (%) | Workforce acceptance of thermal conditions |
+    | **PET** | Physiological Equivalent Temperature (°C) | Primary heat stress indicator |
+    | **PMV** | Predicted Mean Vote (0-3.5 scale) | Thermal comfort assessment |
+    | **PPD** | Predicted Percentage Dissatisfied (%) | Workforce thermal dissatisfaction |
     
     **Heat Stress Risk Thresholds**
     
@@ -888,18 +779,21 @@ with st.expander("📐 Technical Notes & Methodology"):
     | 23-29°C | Low | Standard operations |
     | <23°C | Comfortable | Normal operations |
     
-    **AI Explanation System**
+    **AI Chat Assistant**
     
-    The AI assistant analyzes your specific site conditions and provides:
-    - **WHY** this risk level exists (combination of factors)
-    - **WHAT** factors matter most (ranked by impact)
-    - **HOW** to address each factor (specific recommendations)
-    - **PRACTICAL** guidance for site management
+    The AI chat assistant provides:
+    - **Explanations** of why certain risk levels exist
+    - **Recommendations** for reducing heat stress
+    - **Guidance** on specific site conditions
+    - **Answers** to any heat stress related questions
     
-    Supported LLM providers:
+    Supported providers:
     - OpenAI (GPT-3.5, GPT-4)
     - DeepSeek
-    
-    **Productivity Loss Calculation**
-    
-    Based on empirical models from construction site studies:
+    """)
+
+st.markdown("""
+<div class="footer-text">
+    🧠 Construction Heat Stress AI Chat Assistant | Version 1.0
+</div>
+""", unsafe_allow_html=True)
