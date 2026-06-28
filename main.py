@@ -15,7 +15,7 @@ from datetime import datetime
 warnings.filterwarnings('ignore')
 
 st.set_page_config(
-    page_title="Heat Stress AI - Chat Assistant",
+    page_title="Heat Stress AI Assistant",
     page_icon="🧬",
     layout="wide"
 )
