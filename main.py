@@ -22,7 +22,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Clean, minimal CSS like DeepSeek/ChatGPT
 st.markdown("""
 <style>
     .stApp {
@@ -92,28 +91,6 @@ st.markdown("""
     .chat-message .content li {
         margin: 0.2rem 0;
     }
-    .chat-message .content .metric-grid-inline {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 0.5rem;
-        margin: 0.5rem 0;
-    }
-    .chat-message .content .metric-card-inline {
-        background: rgba(255,255,255,0.05);
-        padding: 0.5rem;
-        border-radius: 6px;
-        text-align: center;
-    }
-    .chat-message .content .metric-card-inline .label {
-        font-size: 0.6rem;
-        color: #8b949e;
-        text-transform: uppercase;
-    }
-    .chat-message .content .metric-card-inline .value {
-        font-size: 1.1rem;
-        font-weight: 700;
-        color: #e6edf3;
-    }
     .input-container {
         position: fixed;
         bottom: 0;
@@ -152,14 +129,6 @@ st.markdown("""
     .input-container .stButton > button:hover {
         background: #2ea043 !important;
         transform: scale(1.02);
-    }
-    .input-container .stButton > button:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-    .result-container {
-        margin-bottom: 120px;
-        padding: 0 1rem;
     }
     .status-badge {
         display: inline-block;
@@ -283,31 +252,52 @@ else:
     except:
         df = create_sample_data()
 
-hs_df = pd.DataFrame({
-    'T(0C)': pd.to_numeric(df['T'], errors='coerce'),
-    'RH(%)': pd.to_numeric(df['RH'], errors='coerce'),
-    'WS(m/s)': pd.to_numeric(df['WS'], errors='coerce'),
-    'PET(0C)': pd.to_numeric(df['PET'], errors='coerce'),
-    'PMV': pd.to_numeric(df['PMV'], errors='coerce'),
-    'PPD(%)': pd.to_numeric(df['PPD'], errors='coerce'),
-    'SET (0C)': pd.to_numeric(df['SET'], errors='coerce'),
-    'RWS(m/s)': pd.to_numeric(df['RWS'], errors='coerce'),
-    'CE(0C)': pd.to_numeric(df['CE'], errors='coerce'),
-    'Productivity': pd.to_numeric(df['Productivity'], errors='coerce')
-}).dropna()
+# Create dataframe with available columns
+hs_df_dict = {
+    'T(0C)': pd.to_numeric(df['T'], errors='coerce') if 'T' in df.columns else None,
+    'RH(%)': pd.to_numeric(df['RH'], errors='coerce') if 'RH' in df.columns else None,
+    'WS(m/s)': pd.to_numeric(df['WS'], errors='coerce') if 'WS' in df.columns else None,
+    'PET(0C)': pd.to_numeric(df['PET'], errors='coerce') if 'PET' in df.columns else None,
+    'PMV': pd.to_numeric(df['PMV'], errors='coerce') if 'PMV' in df.columns else None,
+    'PPD(%)': pd.to_numeric(df['PPD'], errors='coerce') if 'PPD' in df.columns else None,
+    'SET (0C)': pd.to_numeric(df['SET'], errors='coerce') if 'SET' in df.columns else None,
+    'RWS(m/s)': pd.to_numeric(df['RWS'], errors='coerce') if 'RWS' in df.columns else None,
+    'CE(0C)': pd.to_numeric(df['CE'], errors='coerce') if 'CE' in df.columns else None,
+}
 
+# Remove None values
+hs_df_dict = {k: v for k, v in hs_df_dict.items() if v is not None}
+hs_df = pd.DataFrame(hs_df_dict).dropna()
+
+# Height data
 bh_df = pd.DataFrame({
-    'Height(m)': pd.to_numeric(df['Height'], errors='coerce'),
-    'PET(0C)': pd.to_numeric(df['PETH'], errors='coerce'),
-    'PMV': pd.to_numeric(df['PMVH'], errors='coerce')
-}).dropna()
+    'Height(m)': pd.to_numeric(df['Height'], errors='coerce') if 'Height' in df.columns else None,
+    'PET(0C)': pd.to_numeric(df['PETH'], errors='coerce') if 'PETH' in df.columns else None,
+    'PMV': pd.to_numeric(df['PMVH'], errors='coerce') if 'PMVH' in df.columns else None
+})
 
+bh_df = bh_df.dropna()
 if len(bh_df) > 0:
     bh_df = bh_df[bh_df['Height(m)'] > 0].sort_values('Height(m)')
 
+# If no data, create sample
+if len(hs_df) == 0:
+    df = create_sample_data()
+    hs_df = pd.DataFrame({
+        'T(0C)': df['T'],
+        'RH(%)': df['RH'],
+        'WS(m/s)': df['WS'],
+        'PET(0C)': df['PET'],
+        'PMV': df['PMV'],
+        'PPD(%)': df['PPD'],
+        'SET (0C)': df['SET'],
+        'RWS(m/s)': df['RWS'],
+        'CE(0C)': df['CE']
+    })
+
 # ============ TRAIN MULTIPLE MODELS ============
 features = ['T(0C)', 'RH(%)', 'WS(m/s)']
-targets = ['PET(0C)', 'PMV', 'PPD(%)', 'SET (0C)', 'RWS(m/s)', 'CE(0C)', 'Productivity']
+available_targets = ['PET(0C)', 'PMV', 'PPD(%)', 'SET (0C)', 'RWS(m/s)', 'CE(0C)']
 
 X = hs_df[features].values
 scaler = StandardScaler()
@@ -316,11 +306,10 @@ X_scaled = scaler.fit_transform(X)
 models = {}
 model_scores = {}
 
-for target in targets:
+for target in available_targets:
     if target in hs_df.columns:
         y = hs_df[target].values
         
-        # Train multiple models
         models[target] = {}
         
         # Neural Network
@@ -351,7 +340,6 @@ for target in targets:
         lr.fit(X_scaled, y)
         models[target]['lr'] = lr
         
-        # Store scores
         model_scores[target] = {
             'nn': r2_score(y, nn.predict(X_scaled)),
             'rf': r2_score(y, rf.predict(X_scaled)),
@@ -456,7 +444,6 @@ def get_height_profile(ground_pet, ground_pmv, height_m, bh_df):
     }
 
 def predict_with_best_model(target, input_scaled):
-    """Use the best performing model for prediction"""
     if target in models:
         best_model = max(models[target].items(), key=lambda x: model_scores[target][x[0]])[0]
         return models[target][best_model].predict(input_scaled)[0]
@@ -615,7 +602,6 @@ def create_height_chart(height_profile):
     return fig
 
 def get_llm_response(question, context, api_key, api_type="openai"):
-    """Get response from LLM with context"""
     if not api_key:
         return None, "Please enter your API key"
     
@@ -676,10 +662,7 @@ def generate_sample_questions():
         "What work-rest schedule should I implement?",
         "How does working at height affect my heat stress?",
         "What are the main factors causing my heat stress?",
-        "How can I reduce heat stress on my construction site?",
-        "What is the relationship between temperature and productivity?",
-        "How does humidity affect my heat stress risk?",
-        "What is the optimal working height for these conditions?"
+        "How can I reduce heat stress on my construction site?"
     ]
 
 # ============ SESSION STATE ============
@@ -720,15 +703,13 @@ with st.sidebar:
         st.session_state.api_key = api_key
     
     if st.button("🔄 Update Data & Analyze", use_container_width=True):
-        # Calculate predictions
         input_data = np.array([[T, RH, WS]])
         input_scaled = scaler.transform(input_data)
         
         predictions = {}
-        for target in targets:
+        for target in available_targets:
             predictions[target] = predict_with_best_model(target, input_scaled)
         
-        # Apply adjustments
         predictions['PET(0C)'] = np.clip(predictions['PET(0C)'] + clo * 0.5 + (met - 2.0) * 0.3, 20, 50)
         predictions['PMV'] = np.clip(predictions['PMV'] + clo * 0.3 + (met - 2.0) * 0.2, 0, 3.5)
         predictions['PPD(%)'] = np.clip(predictions['PPD(%)'] + clo * 2 + (met - 2.0) * 1.5, 5, 90)
@@ -736,7 +717,6 @@ with st.sidebar:
         ground_pet = predictions["PET(0C)"]
         ground_pmv = predictions["PMV"]
         ground_ppd = predictions['PPD(%)']
-        productivity = predictions['Productivity']
         
         height_profile = get_height_profile(ground_pet, ground_pmv, height, bh_df)
         risk_level, risk_desc, risk_icon, risk_class = get_thermal_risk_level(ground_pet)
@@ -745,18 +725,16 @@ with st.sidebar:
         pet_effective = height_profile['pet_at_height'] if height_profile else ground_pet
         productivity_loss = calc_productivity_loss(pet_effective, current_work_key, baseline_productivity)
         
-        # Store results
         st.session_state.current_results = {
             'T': T, 'RH': RH, 'WS': WS, 'clo': clo, 'met': met, 'height': height,
             'ground_pet': ground_pet, 'ground_pmv': ground_pmv, 'ground_ppd': ground_ppd,
-            'productivity': productivity, 'productivity_loss': productivity_loss,
+            'productivity_loss': productivity_loss,
             'risk_level': risk_level, 'risk_desc': risk_desc, 'risk_icon': risk_icon,
             'risk_class': risk_class, 'pmv_interpretation': pmv_interpretation,
             'current_work_key': current_work_key, 'height_profile': height_profile,
             'baseline_productivity': baseline_productivity, 'predictions': predictions
         }
         
-        # Build context for AI
         st.session_state.context_data = f"""
         Site Conditions:
         - Temperature: {T:.1f}°C
@@ -771,7 +749,6 @@ with st.sidebar:
         - PET: {ground_pet:.1f}°C ({risk_level} risk - {risk_desc})
         - PMV: {ground_pmv:.2f} ({pmv_interpretation})
         - PPD: {ground_ppd:.1f}%
-        - Predicted Productivity: {productivity:.1f} units/hr
         - Productivity Loss: {productivity_loss:.1f}%
         - Height Reduction: {height_profile['reduction']:.1f}°C at {height}m
         """
@@ -783,18 +760,15 @@ with st.sidebar:
 if st.session_state.has_results and st.session_state.current_results:
     r = st.session_state.current_results
     
-    # Quick metrics
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("🌡️ PET", f"{r['ground_pet']:.1f}°C", delta=None)
+        st.metric("🌡️ PET", f"{r['ground_pet']:.1f}°C")
     with col2:
-        st.metric("📊 PMV", f"{r['ground_pmv']:.2f}", delta=None)
+        st.metric("📊 PMV", f"{r['ground_pmv']:.2f}")
     with col3:
-        st.metric("😓 PPD", f"{r['ground_ppd']:.1f}%", delta=None)
+        st.metric("😓 PPD", f"{r['ground_ppd']:.1f}%")
     with col4:
-        st.metric("📉 Loss", f"{r['productivity_loss']:.1f}%", delta=None)
-    with col5:
-        st.metric("🏗️ Height", f"{r['height']}m", delta=f"-{r['height_profile']['reduction']:.1f}°C" if r['height_profile'] else None)
+        st.metric("📉 Loss", f"{r['productivity_loss']:.1f}%")
     
     st.markdown(f"""
     <div style="text-align:center; margin:0.5rem 0;">
@@ -806,7 +780,6 @@ if st.session_state.has_results and st.session_state.current_results:
     <hr class="divider">
     """, unsafe_allow_html=True)
     
-    # Visualizations
     col1, col2 = st.columns([2, 1])
     with col1:
         fig_risk = create_risk_chart(r['ground_pet'], r['ground_pmv'], r['ground_ppd'], r['productivity_loss'])
@@ -817,10 +790,9 @@ if st.session_state.has_results and st.session_state.current_results:
             if fig_height:
                 st.plotly_chart(fig_height, use_container_width=True, config={'displayModeBar': False})
         
-        # Model performance
         with st.expander("📊 Model Performance", expanded=False):
             st.markdown("**Best Models:**")
-            for target in targets:
+            for target in available_targets:
                 if target in model_scores:
                     best_model = max(model_scores[target].items(), key=lambda x: x[1])[0]
                     st.text(f"{target}: {best_model.upper()} (R²={model_scores[target][best_model]:.3f})")
@@ -828,7 +800,6 @@ if st.session_state.has_results and st.session_state.current_results:
 # ============ CHAT INTERFACE ============
 st.markdown("### 💬 Ask Questions")
 
-# Display chat messages
 for msg in st.session_state.messages:
     role_class = "user" if msg["role"] == "user" else "assistant"
     role_label = "You" if msg["role"] == "user" else "AI Assistant"
@@ -840,6 +811,7 @@ for msg in st.session_state.messages:
     """, unsafe_allow_html=True)
 
 if not st.session_state.messages and st.session_state.has_results:
+    r = st.session_state.current_results
     welcome = f"""**I've analyzed your site data. Here's the summary:**
 
 ✅ **Risk Assessment:** {r['risk_icon']} {r['risk_level']} - {r['risk_desc']}
@@ -895,10 +867,8 @@ if send_button and user_input:
     elif not api_key:
         st.error("⚠️ Please enter your API key in the sidebar")
     else:
-        # Add user message
         st.session_state.messages.append({"role": "user", "content": user_input})
         
-        # Get AI response
         with st.spinner("🧠 Analyzing with AI..."):
             response, error = get_llm_response(
                 user_input,
@@ -908,7 +878,6 @@ if send_button and user_input:
             )
         
         if response:
-            # Add AI response
             st.session_state.messages.append({"role": "assistant", "content": response})
         else:
             st.session_state.messages.append({"role": "assistant", "content": f"Error: {error}"})
