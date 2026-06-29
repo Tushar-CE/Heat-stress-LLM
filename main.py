@@ -9,16 +9,20 @@ from plotly.subplots import make_subplots
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import r2_score
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score, mean_squared_error
+import json
+from datetime import datetime
 warnings.filterwarnings('ignore')
 
 st.set_page_config(
-    page_title="Heat Stress AI",
+    page_title="Heat Stress AI Assistant",
     page_icon="🌡️",
     layout="wide"
 )
 
-# Clean, minimal CSS like DeepSeek
+# Clean, minimal CSS like DeepSeek/ChatGPT
 st.markdown("""
 <style>
     .stApp {
@@ -28,22 +32,29 @@ st.markdown("""
         font-size: 2.5rem;
         font-weight: 700;
         text-align: center;
-        color: #ffffff;
-        padding: 2rem 0 0.5rem 0;
+        background: linear-gradient(135deg, #58a6ff, #3fb950);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        padding: 1.5rem 0 0.3rem 0;
         letter-spacing: -0.5px;
     }
     .sub-header {
         text-align: center;
         color: #8b949e;
-        font-size: 1rem;
-        margin-bottom: 2rem;
+        font-size: 0.95rem;
+        margin-bottom: 1.5rem;
     }
     .chat-message {
         padding: 1rem 1.5rem;
         margin: 0.5rem 0;
         border-radius: 8px;
-        line-height: 1.6;
+        line-height: 1.7;
         font-size: 0.95rem;
+        animation: fadeIn 0.5s ease;
+    }
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
     }
     .chat-message.user {
         background: #1c2333;
@@ -80,6 +91,28 @@ st.markdown("""
     }
     .chat-message .content li {
         margin: 0.2rem 0;
+    }
+    .chat-message .content .metric-grid-inline {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 0.5rem;
+        margin: 0.5rem 0;
+    }
+    .chat-message .content .metric-card-inline {
+        background: rgba(255,255,255,0.05);
+        padding: 0.5rem;
+        border-radius: 6px;
+        text-align: center;
+    }
+    .chat-message .content .metric-card-inline .label {
+        font-size: 0.6rem;
+        color: #8b949e;
+        text-transform: uppercase;
+    }
+    .chat-message .content .metric-card-inline .value {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: #e6edf3;
     }
     .input-container {
         position: fixed;
@@ -125,37 +158,9 @@ st.markdown("""
         cursor: not-allowed;
     }
     .result-container {
-        margin-bottom: 100px;
+        margin-bottom: 120px;
         padding: 0 1rem;
     }
-    .metric-grid {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 0.5rem;
-        margin: 0.5rem 0;
-    }
-    .metric-card {
-        background: #161b22;
-        padding: 0.8rem;
-        border-radius: 8px;
-        text-align: center;
-        border: 1px solid #21262d;
-    }
-    .metric-card .label {
-        font-size: 0.65rem;
-        color: #8b949e;
-        text-transform: uppercase;
-        letter-spacing: 0.3px;
-    }
-    .metric-card .value {
-        font-size: 1.4rem;
-        font-weight: 700;
-        color: #e6edf3;
-        margin-top: 0.2rem;
-    }
-    .metric-card .value.high { color: #f85149; }
-    .metric-card .value.moderate { color: #d29922; }
-    .metric-card .value.low { color: #3fb950; }
     .status-badge {
         display: inline-block;
         padding: 0.2rem 0.8rem;
@@ -218,20 +223,10 @@ st.markdown("""
     .stButton > button:hover {
         background: #30363d;
     }
-    .suggestion-btn {
-        background: #21262d !important;
-        color: #8b949e !important;
-        border: 1px solid #30363d !important;
-        border-radius: 20px !important;
-        padding: 0.3rem 1rem !important;
-        font-size: 0.8rem !important;
-        margin: 0.2rem !important;
-        cursor: pointer !important;
-        transition: 0.2s !important;
-    }
-    .suggestion-btn:hover {
-        background: #30363d !important;
-        color: #e6edf3 !important;
+    .stSelectbox > div > div {
+        background: #161b22;
+        color: #e6edf3;
+        border: 1px solid #30363d;
     }
     .plotly-container {
         background: #161b22;
@@ -243,26 +238,37 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Data loading and model training (same as before)
+# ============ DATA LOADING AND MODEL TRAINING ============
 def create_sample_data():
     np.random.seed(42)
-    n_samples = 500
+    n_samples = 1000
     T = np.random.uniform(20, 45, n_samples)
     RH = np.random.uniform(30, 90, n_samples)
     WS = np.random.uniform(0.1, 8, n_samples)
+    
     PET = T + 5 - 0.8 * WS + 0.015 * (RH - 40) + np.random.normal(0, 1, n_samples)
     PET = np.clip(PET, 20, 50)
+    
     PMV = 1.5 + (T - 25) * 0.12 - 0.15 * WS + 0.02 * (RH - 40) + np.random.normal(0, 0.2, n_samples)
     PMV = np.clip(PMV, 0, 4)
+    
+    PPD = 5 + 85 * (1 - np.exp(-0.5 * (PMV - 1)))
+    SET = PET - 1 + np.random.normal(0, 0.5, n_samples)
+    RWS = WS * 0.8 + np.random.normal(0, 0.2, n_samples)
+    CE = 2 + 0.5 * WS + np.random.normal(0, 0.3, n_samples)
+    Height = np.random.uniform(0, 100, n_samples)
+    PETH = PET - np.random.uniform(0, 6, n_samples)
+    PMVH = PMV - np.random.uniform(0, 1, n_samples)
+    
+    # Productivity data
+    productivity = 100 - (PET - 20) * 0.5 - (RH - 40) * 0.1 + WS * 2 + np.random.normal(0, 5, n_samples)
+    productivity = np.clip(productivity, 20, 100)
+    
     df = pd.DataFrame({
         'T': T, 'RH': RH, 'WS': WS, 'PET': PET, 'PMV': PMV,
-        'PPD': 5 + 85 * (1 - np.exp(-0.5 * (PMV - 1))),
-        'SET': PET - 1 + np.random.normal(0, 0.5, n_samples),
-        'RWS': WS * 0.8 + np.random.normal(0, 0.2, n_samples),
-        'CE': 2 + 0.5 * WS + np.random.normal(0, 0.3, n_samples),
-        'Height': np.random.uniform(0, 100, n_samples),
-        'PETH': PET - np.random.uniform(0, 6, n_samples),
-        'PMVH': PMV - np.random.uniform(0, 1, n_samples)
+        'PPD': PPD, 'SET': SET, 'RWS': RWS, 'CE': CE,
+        'Height': Height, 'PETH': PETH, 'PMVH': PMVH,
+        'Productivity': productivity
     })
     return df
 
@@ -286,7 +292,8 @@ hs_df = pd.DataFrame({
     'PPD(%)': pd.to_numeric(df['PPD'], errors='coerce'),
     'SET (0C)': pd.to_numeric(df['SET'], errors='coerce'),
     'RWS(m/s)': pd.to_numeric(df['RWS'], errors='coerce'),
-    'CE(0C)': pd.to_numeric(df['CE'], errors='coerce')
+    'CE(0C)': pd.to_numeric(df['CE'], errors='coerce'),
+    'Productivity': pd.to_numeric(df['Productivity'], errors='coerce')
 }).dropna()
 
 bh_df = pd.DataFrame({
@@ -298,36 +305,60 @@ bh_df = pd.DataFrame({
 if len(bh_df) > 0:
     bh_df = bh_df[bh_df['Height(m)'] > 0].sort_values('Height(m)')
 
+# ============ TRAIN MULTIPLE MODELS ============
 features = ['T(0C)', 'RH(%)', 'WS(m/s)']
-targets = ['PET(0C)', 'PMV', 'PPD(%)', 'SET (0C)', 'RWS(m/s)', 'CE(0C)']
+targets = ['PET(0C)', 'PMV', 'PPD(%)', 'SET (0C)', 'RWS(m/s)', 'CE(0C)', 'Productivity']
 
 X = hs_df[features].values
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 
-y_dict = {}
+models = {}
+model_scores = {}
+
 for target in targets:
     if target in hs_df.columns:
-        y_dict[target] = hs_df[target].values
+        y = hs_df[target].values
+        
+        # Train multiple models
+        models[target] = {}
+        
+        # Neural Network
+        nn = MLPRegressor(
+            hidden_layer_sizes=(128, 64, 32),
+            activation='relu',
+            solver='adam',
+            alpha=0.001,
+            max_iter=500,
+            random_state=42,
+            early_stopping=True,
+            n_iter_no_change=10
+        )
+        nn.fit(X_scaled, y)
+        models[target]['nn'] = nn
+        
+        # Random Forest
+        rf = RandomForestRegressor(
+            n_estimators=100,
+            max_depth=10,
+            random_state=42
+        )
+        rf.fit(X_scaled, y)
+        models[target]['rf'] = rf
+        
+        # Linear Regression
+        lr = LinearRegression()
+        lr.fit(X_scaled, y)
+        models[target]['lr'] = lr
+        
+        # Store scores
+        model_scores[target] = {
+            'nn': r2_score(y, nn.predict(X_scaled)),
+            'rf': r2_score(y, rf.predict(X_scaled)),
+            'lr': r2_score(y, lr.predict(X_scaled))
+        }
 
-models = {}
-for target, y in y_dict.items():
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_scaled, y, test_size=0.2, random_state=42
-    )
-    nn = MLPRegressor(
-        hidden_layer_sizes=(128, 64, 32),
-        activation='relu',
-        solver='adam',
-        alpha=0.001,
-        max_iter=500,
-        random_state=42,
-        early_stopping=True,
-        n_iter_no_change=10
-    )
-    nn.fit(X_train, y_train)
-    models[target] = nn
-
+# ============ WORK DATA ============
 work_data = {
     "Rest (R)": {"M": 115, "PET_AL": 35, "description": "Sitting", "base_factor": 0.15},
     "Light (LW)": {"M": 180, "PET_AL": 35.5, "description": "Light hand work", "base_factor": 0.20},
@@ -341,6 +372,7 @@ activity_to_work = {
     3.2: "Heavy (HW)", 3.8: "Heavy (HW)", 4.0: "Very Heavy (VHW)"
 }
 
+# ============ HELPER FUNCTIONS ============
 def calc_productivity_loss(pet_value, work_type_key, baseline):
     work = work_data[work_type_key]
     PET_AL = work["PET_AL"]
@@ -423,45 +455,12 @@ def get_height_profile(ground_pet, ground_pmv, height_m, bh_df):
         'lapse_rate': (ground_pet - pet_at_100) / 100 if height_m > 0 else 0
     }
 
-def call_llm_api(messages, api_key, api_type="openai"):
-    if not api_key:
-        return None, "Please enter your API key in the sidebar"
-    try:
-        if api_type == "openai":
-            import openai
-            client = openai.OpenAI(api_key=api_key)
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=messages,
-                temperature=0.7,
-                max_tokens=800
-            )
-            return response.choices[0].message.content, None
-        elif api_type == "deepseek":
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-            data = {
-                "model": "deepseek-chat",
-                "messages": messages,
-                "temperature": 0.7,
-                "max_tokens": 800
-            }
-            response = requests.post(
-                "https://api.deepseek.com/v1/chat/completions",
-                headers=headers,
-                json=data,
-                timeout=30
-            )
-            if response.status_code == 200:
-                return response.json()['choices'][0]['message']['content'], None
-            else:
-                return None, f"API Error: {response.status_code}"
-        else:
-            return None, "Unsupported API type"
-    except Exception as e:
-        return None, f"Error: {str(e)}"
+def predict_with_best_model(target, input_scaled):
+    """Use the best performing model for prediction"""
+    if target in models:
+        best_model = max(models[target].items(), key=lambda x: model_scores[target][x[0]])[0]
+        return models[target][best_model].predict(input_scaled)[0]
+    return 0
 
 def create_risk_chart(pet, pmv, ppd, productivity_loss):
     fig = make_subplots(
@@ -572,11 +571,11 @@ def create_risk_chart(pet, pmv, ppd, productivity_loss):
     
     fig.update_layout(
         template='plotly_dark',
-        height=450,
+        height=400,
         showlegend=False,
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color='white', size=12)
+        font=dict(color='white', size=11)
     )
     
     return fig
@@ -606,7 +605,7 @@ def create_height_chart(height_profile):
         xaxis_title="Height (m)",
         yaxis_title="PET (°C)",
         template='plotly_dark',
-        height=300,
+        height=250,
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         font=dict(color='white'),
@@ -615,59 +614,121 @@ def create_height_chart(height_profile):
     
     return fig
 
-# Initialize session state
+def get_llm_response(question, context, api_key, api_type="openai"):
+    """Get response from LLM with context"""
+    if not api_key:
+        return None, "Please enter your API key"
+    
+    system_prompt = """You are a construction heat stress and productivity expert. You have been trained on heat stress data and can answer questions about:
+    - Heat stress indicators (PET, PMV, PPD, SET, RWS, CE)
+    - Productivity loss and optimization
+    - Work-rest schedules
+    - Height effects on temperature
+    - Risk assessment and mitigation
+    - Construction worker safety
+    
+    Provide clear, detailed, and actionable answers. Use the provided context data. Include bullet points, specific numbers, and practical recommendations. Be professional and helpful."""
+    
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": f"Current Site Context: {context}"},
+        {"role": "user", "content": question}
+    ]
+    
+    try:
+        if api_type == "openai":
+            import openai
+            client = openai.OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=messages,
+                temperature=0.7,
+                max_tokens=1000
+            )
+            return response.choices[0].message.content, None
+        elif api_type == "deepseek":
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            data = {
+                "model": "deepseek-chat",
+                "messages": messages,
+                "temperature": 0.7,
+                "max_tokens": 1000
+            }
+            response = requests.post(
+                "https://api.deepseek.com/v1/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=30
+            )
+            if response.status_code == 200:
+                return response.json()['choices'][0]['message']['content'], None
+            else:
+                return None, f"API Error: {response.status_code}"
+        else:
+            return None, "Unsupported API type"
+    except Exception as e:
+        return None, f"Error: {str(e)}"
+
+def generate_sample_questions():
+    return [
+        "What is my current heat stress risk level and why?",
+        "How much productivity loss can I expect?",
+        "What work-rest schedule should I implement?",
+        "How does working at height affect my heat stress?",
+        "What are the main factors causing my heat stress?",
+        "How can I reduce heat stress on my construction site?",
+        "What is the relationship between temperature and productivity?",
+        "How does humidity affect my heat stress risk?",
+        "What is the optimal working height for these conditions?"
+    ]
+
+# ============ SESSION STATE ============
 if 'messages' not in st.session_state:
     st.session_state.messages = []
 if 'has_results' not in st.session_state:
     st.session_state.has_results = False
 if 'current_results' not in st.session_state:
     st.session_state.current_results = None
+if 'context_data' not in st.session_state:
+    st.session_state.context_data = None
 
-# Sidebar for inputs
+# ============ MAIN UI ============
+st.markdown('<div class="main-header">🌡️ Heat Stress AI Assistant</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Powered by AI · Trained on construction heat stress data</div>', unsafe_allow_html=True)
+
+# Sidebar
 with st.sidebar:
-    st.markdown("### 🌡️ Input Data")
+    st.markdown("### 📊 Input Data")
     st.markdown("---")
     
+    st.markdown("#### 🌤️ Environmental")
     T = st.number_input("Temperature (°C)", 20.0, 50.0, 34.0, 0.1)
     RH = st.number_input("Humidity (%)", 0.0, 100.0, 65.0, 1.0)
     WS = st.number_input("Wind Speed (m/s)", 0.0, 10.0, 1.5, 0.1)
+    
+    st.markdown("#### 👷 Personal")
     clo = st.select_slider("Clothing (clo)", options=[0.36, 0.50, 0.57, 0.61, 0.96, 1.00], value=0.57)
     met = st.select_slider("Activity (met)", options=[2.1, 2.2, 2.6, 3.2, 3.8, 4.0], value=3.2)
     height = st.slider("Working Height (m)", 0, 100, 0, 1)
     baseline_productivity = st.number_input("Baseline Output (units/hr)", min_value=1.0, value=100.0, step=5.0)
     
     st.markdown("---")
-    st.markdown("### 🤖 AI Setup")
-    api_type = st.selectbox("Provider", ["openai", "deepseek"], index=0)
+    st.markdown("#### 🤖 AI Model")
+    api_type = st.selectbox("AI Provider", ["openai", "deepseek"], index=0)
     api_key = st.text_input("API Key", type="password", placeholder="Enter your API key")
     if api_key:
         st.session_state.api_key = api_key
     
-    if st.button("📊 Calculate Results", use_container_width=True):
-        # Calculate results
+    if st.button("🔄 Update Data & Analyze", use_container_width=True):
+        # Calculate predictions
         input_data = np.array([[T, RH, WS]])
         input_scaled = scaler.transform(input_data)
         
         predictions = {}
         for target in targets:
-            if target in models:
-                predictions[target] = models[target].predict(input_scaled)[0]
-            else:
-                if target == 'PET(0C)':
-                    predictions[target] = T + 5 + 0.015*(RH-40) - 0.8*WS
-                elif target == 'PMV':
-                    predictions[target] = 1.5 + (T-25)*0.12 - 0.15*WS + 0.02*(RH-40)
-                elif target == 'PPD(%)':
-                    predictions[target] = 50
-                elif target == 'SET (0C)':
-                    predictions[target] = T + 3
-                elif target == 'RWS(m/s)':
-                    predictions[target] = WS * 0.8
-                elif target == 'CE(0C)':
-                    predictions[target] = 2 + 0.5*WS
-                else:
-                    predictions[target] = 0
+            predictions[target] = predict_with_best_model(target, input_scaled)
         
+        # Apply adjustments
         predictions['PET(0C)'] = np.clip(predictions['PET(0C)'] + clo * 0.5 + (met - 2.0) * 0.3, 20, 50)
         predictions['PMV'] = np.clip(predictions['PMV'] + clo * 0.3 + (met - 2.0) * 0.2, 0, 3.5)
         predictions['PPD(%)'] = np.clip(predictions['PPD(%)'] + clo * 2 + (met - 2.0) * 1.5, 5, 90)
@@ -675,6 +736,7 @@ with st.sidebar:
         ground_pet = predictions["PET(0C)"]
         ground_pmv = predictions["PMV"]
         ground_ppd = predictions['PPD(%)']
+        productivity = predictions['Productivity']
         
         height_profile = get_height_profile(ground_pet, ground_pmv, height, bh_df)
         risk_level, risk_desc, risk_icon, risk_class = get_thermal_risk_level(ground_pet)
@@ -683,49 +745,63 @@ with st.sidebar:
         pet_effective = height_profile['pet_at_height'] if height_profile else ground_pet
         productivity_loss = calc_productivity_loss(pet_effective, current_work_key, baseline_productivity)
         
+        # Store results
         st.session_state.current_results = {
             'T': T, 'RH': RH, 'WS': WS, 'clo': clo, 'met': met, 'height': height,
             'ground_pet': ground_pet, 'ground_pmv': ground_pmv, 'ground_ppd': ground_ppd,
+            'productivity': productivity, 'productivity_loss': productivity_loss,
             'risk_level': risk_level, 'risk_desc': risk_desc, 'risk_icon': risk_icon,
             'risk_class': risk_class, 'pmv_interpretation': pmv_interpretation,
-            'current_work_key': current_work_key, 'productivity_loss': productivity_loss,
-            'height_profile': height_profile, 'baseline_productivity': baseline_productivity,
-            'predictions': predictions
+            'current_work_key': current_work_key, 'height_profile': height_profile,
+            'baseline_productivity': baseline_productivity, 'predictions': predictions
         }
+        
+        # Build context for AI
+        st.session_state.context_data = f"""
+        Site Conditions:
+        - Temperature: {T:.1f}°C
+        - Humidity: {RH:.0f}%
+        - Wind Speed: {WS:.1f} m/s
+        - Working Height: {height}m
+        - Clothing: {clo:.2f} clo
+        - Activity: {met:.1f} met ({current_work_key})
+        - Baseline Productivity: {baseline_productivity:.0f} units/hr
+
+        Results:
+        - PET: {ground_pet:.1f}°C ({risk_level} risk - {risk_desc})
+        - PMV: {ground_pmv:.2f} ({pmv_interpretation})
+        - PPD: {ground_ppd:.1f}%
+        - Predicted Productivity: {productivity:.1f} units/hr
+        - Productivity Loss: {productivity_loss:.1f}%
+        - Height Reduction: {height_profile['reduction']:.1f}°C at {height}m
+        """
+        
         st.session_state.has_results = True
         st.rerun()
 
-# Main content - Clean chat interface
-st.markdown('<div class="main-header">🌡️ Heat Stress AI</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Ask about your heat stress results · Get instant analysis</div>', unsafe_allow_html=True)
-
-# Display results if available
+# ============ DISPLAY RESULTS ============
 if st.session_state.has_results and st.session_state.current_results:
     r = st.session_state.current_results
     
     # Quick metrics
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        st.metric("🌡️ PET", f"{r['ground_pet']:.1f}°C", delta=None)
+    with col2:
+        st.metric("📊 PMV", f"{r['ground_pmv']:.2f}", delta=None)
+    with col3:
+        st.metric("😓 PPD", f"{r['ground_ppd']:.1f}%", delta=None)
+    with col4:
+        st.metric("📉 Loss", f"{r['productivity_loss']:.1f}%", delta=None)
+    with col5:
+        st.metric("🏗️ Height", f"{r['height']}m", delta=f"-{r['height_profile']['reduction']:.1f}°C" if r['height_profile'] else None)
+    
     st.markdown(f"""
-    <div class="metric-grid">
-        <div class="metric-card">
-            <div class="label">🌡️ PET</div>
-            <div class="value {'high' if r['ground_pet'] > 35 else 'moderate' if r['ground_pet'] > 29 else 'low'}">{r['ground_pet']:.1f}°C</div>
-        </div>
-        <div class="metric-card">
-            <div class="label">📊 PMV</div>
-            <div class="value {'high' if r['ground_pmv'] > 2.5 else 'moderate' if r['ground_pmv'] > 1.5 else 'low'}">{r['ground_pmv']:.2f}</div>
-        </div>
-        <div class="metric-card">
-            <div class="label">😓 PPD</div>
-            <div class="value {'high' if r['ground_ppd'] > 50 else 'moderate' if r['ground_ppd'] > 25 else 'low'}">{r['ground_ppd']:.1f}%</div>
-        </div>
-        <div class="metric-card">
-            <div class="label">📉 Loss</div>
-            <div class="value {'high' if r['productivity_loss'] > 20 else 'moderate' if r['productivity_loss'] > 10 else 'low'}">{r['productivity_loss']:.1f}%</div>
-        </div>
-    </div>
     <div style="text-align:center; margin:0.5rem 0;">
         <span class="status-badge {r['risk_class']}">{r['risk_icon']} {r['risk_level']}</span>
         <span style="color:#8b949e; margin-left:1rem;">{r['risk_desc']}</span>
+        <span style="color:#8b949e; margin-left:1rem;">|</span>
+        <span style="color:#8b949e; margin-left:1rem;">{r['pmv_interpretation']}</span>
     </div>
     <hr class="divider">
     """, unsafe_allow_html=True)
@@ -740,115 +816,106 @@ if st.session_state.has_results and st.session_state.current_results:
             fig_height = create_height_chart(r['height_profile'])
             if fig_height:
                 st.plotly_chart(fig_height, use_container_width=True, config={'displayModeBar': False})
-        st.markdown(f"""
-        <div style="background:#161b22; padding:0.8rem; border-radius:8px; border:1px solid #21262d; margin-top:0.5rem;">
-            <div style="color:#8b949e; font-size:0.8rem;">Working Height</div>
-            <div style="color:#e6edf3; font-size:1.2rem; font-weight:600;">{r['height']}m</div>
-            <div style="color:#8b949e; font-size:0.8rem; margin-top:0.3rem;">Reduction: {r['height_profile']['reduction']:.1f}°C</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-# Chat messages
-chat_container = st.container()
-with chat_container:
-    for msg in st.session_state.messages:
-        role_class = "user" if msg["role"] == "user" else "assistant"
-        role_label = "You" if msg["role"] == "user" else "AI Assistant"
-        st.markdown(f"""
-        <div class="chat-message {role_class}">
-            <div class="role">{role_label}</div>
-            <div class="content">{msg["content"]}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    if not st.session_state.messages and st.session_state.has_results:
-        r = st.session_state.current_results
-        welcome_msg = f"""**I've analyzed your site data. Here's what I found:**
-
-• **Risk Level:** {r['risk_icon']} {r['risk_level']} - {r['risk_desc']}
-• **PET:** {r['ground_pet']:.1f}°C (Threshold: 35°C for high risk)
-• **PMV:** {r['ground_pmv']:.2f} - {r['pmv_interpretation']}
-• **Productivity Impact:** {r['productivity_loss']:.1f}% loss for {r['current_work_key']}
-
-**Ask me anything about your results:**"""
         
-        st.markdown(f"""
-        <div class="chat-message assistant">
-            <div class="role">AI Assistant</div>
-            <div class="content">{welcome_msg}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        # Model performance
+        with st.expander("📊 Model Performance", expanded=False):
+            st.markdown("**Best Models:**")
+            for target in targets:
+                if target in model_scores:
+                    best_model = max(model_scores[target].items(), key=lambda x: x[1])[0]
+                    st.text(f"{target}: {best_model.upper()} (R²={model_scores[target][best_model]:.3f})")
 
-# Input area at bottom
+# ============ CHAT INTERFACE ============
+st.markdown("### 💬 Ask Questions")
+
+# Display chat messages
+for msg in st.session_state.messages:
+    role_class = "user" if msg["role"] == "user" else "assistant"
+    role_label = "You" if msg["role"] == "user" else "AI Assistant"
+    st.markdown(f"""
+    <div class="chat-message {role_class}">
+        <div class="role">{role_label}</div>
+        <div class="content">{msg["content"]}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+if not st.session_state.messages and st.session_state.has_results:
+    welcome = f"""**I've analyzed your site data. Here's the summary:**
+
+✅ **Risk Assessment:** {r['risk_icon']} {r['risk_level']} - {r['risk_desc']}
+🌡️ **PET:** {r['ground_pet']:.1f}°C (Threshold: 35°C for high risk)
+📊 **PMV:** {r['ground_pmv']:.2f} - {r['pmv_interpretation']}
+📉 **Productivity Loss:** {r['productivity_loss']:.1f}% for {r['current_work_key']}
+🏗️ **Height Effect:** {r['height_profile']['reduction']:.1f}°C reduction at {r['height']}m
+
+**I can answer questions about:**
+• Heat stress risk factors and mitigation
+• Productivity optimization strategies
+• Work-rest schedules and recommendations
+• Height effects and working conditions
+• Site-specific safety guidance
+
+**Try asking:** "What should I do to reduce heat stress?" or "Explain my productivity loss"
+"""
+    st.markdown(f"""
+    <div class="chat-message assistant">
+        <div class="role">AI Assistant</div>
+        <div class="content">{welcome}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ============ INPUT AREA ============
 with st.container():
     col1, col2 = st.columns([5, 1])
     with col1:
         user_input = st.text_input(
-            "Ask a question",
-            placeholder="e.g., Why is my PET level so high?",
+            "Ask a question about heat stress, productivity, or safety",
+            placeholder="e.g., What should I do to reduce heat stress?",
             label_visibility="collapsed",
             key="user_input"
         )
     with col2:
-        send_button = st.button("Send", use_container_width=True, key="send_btn")
+        send_button = st.button("Send", use_container_width=True)
 
-# Suggestions
+# Sample questions
 if not st.session_state.messages:
-    suggestions = [
-        "Why is my PET level so high?",
-        "What should I do to reduce heat stress?",
-        "How does humidity affect my risk?",
-        "What's the best work schedule?",
-        "Explain my productivity loss",
-        "How does height affect temperature?"
-    ]
-    cols = st.columns(6)
-    for i, suggestion in enumerate(suggestions):
-        with cols[i]:
-            if st.button(suggestion, key=f"sug_{i}"):
-                user_input = suggestion
+    st.markdown("#### 🔍 Sample Questions")
+    sample_qs = generate_sample_questions()
+    cols = st.columns(3)
+    for i, q in enumerate(sample_qs[:6]):
+        with cols[i % 3]:
+            if st.button(q, key=f"sample_{i}", use_container_width=True):
+                user_input = q
                 st.rerun()
 
 # Process user input
 if send_button and user_input:
-    if not api_key:
+    if not st.session_state.has_results:
+        st.error("⚠️ Please analyze your data first using the sidebar button")
+    elif not api_key:
         st.error("⚠️ Please enter your API key in the sidebar")
-    elif not st.session_state.has_results:
-        st.error("⚠️ Please calculate results first using the sidebar button")
     else:
-        r = st.session_state.current_results
-        
-        context = f"""
-        Site: {r['T']:.1f}°C, {r['RH']:.0f}% humidity, {r['WS']:.1f} m/s wind, {r['height']}m height
-        Clothing: {r['clo']:.2f} clo, Activity: {r['met']:.1f} met ({r['current_work_key']})
-        Results: PET {r['ground_pet']:.1f}°C ({r['risk_level']}), PMV {r['ground_pmv']:.2f}, PPD {r['ground_ppd']:.1f}%, Loss {r['productivity_loss']:.1f}%
-        """
-        
-        system_message = """You are a construction heat stress safety expert. Give clear, practical answers about heat stress. Use bullet points. Be specific and actionable."""
-        
-        messages = [
-            {"role": "system", "content": system_message},
-            {"role": "system", "content": f"Current Site Data: {context}"}
-        ]
-        
-        for msg in st.session_state.messages[-6:]:
-            messages.append({"role": msg["role"], "content": msg["content"]})
-        
-        messages.append({"role": "user", "content": user_input})
-        
+        # Add user message
         st.session_state.messages.append({"role": "user", "content": user_input})
         
-        with st.spinner("🧠 Analyzing..."):
-            response, error = call_llm_api(messages, api_key, api_type)
+        # Get AI response
+        with st.spinner("🧠 Analyzing with AI..."):
+            response, error = get_llm_response(
+                user_input,
+                st.session_state.context_data,
+                api_key,
+                api_type
+            )
         
         if response:
+            # Add AI response
             st.session_state.messages.append({"role": "assistant", "content": response})
         else:
             st.session_state.messages.append({"role": "assistant", "content": f"Error: {error}"})
         
         st.rerun()
 
-# Clear chat button
+# Clear chat
 if st.session_state.messages:
     if st.button("🗑️ Clear Chat", key="clear_chat"):
         st.session_state.messages = []
@@ -856,6 +923,6 @@ if st.session_state.messages:
 
 st.markdown("""
 <div class="footer">
-    Heat Stress AI Assistant · Powered by AI · Enter your data in the sidebar
+    🌡️ Heat Stress AI Assistant · Trained on construction heat stress data · Ask any question
 </div>
 """, unsafe_allow_html=True)
