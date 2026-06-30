@@ -7,8 +7,10 @@ ACGIH heat-stress guidance, and the app renders structured recommendations
 plus Plotly visualizations (WBGT gauge, REL work/rest chart, risk timeline).
 
 Deploy: GitHub + Streamlit Community Cloud.
-Secrets required: ANTHROPIC_API_KEY (Settings -> Secrets on Streamlit Cloud,
-or a local .streamlit/secrets.toml file, or an environment variable).
+Free LLM backends supported: Groq (Llama 3.3 70B) and Google Gemini (free tier).
+Secrets required (at least one): GROQ_API_KEY and/or GEMINI_API_KEY
+(Settings -> Secrets on Streamlit Cloud, a local .streamlit/secrets.toml file,
+or environment variables).
 """
 
 import os
@@ -21,9 +23,14 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 try:
-    import anthropic
+    from groq import Groq
 except ImportError:
-    anthropic = None
+    Groq = None
+
+try:
+    import google.generativeai as genai
+except ImportError:
+    genai = None
 
 # ----------------------------------------------------------------------
 # PAGE CONFIG & STYLE
@@ -184,36 +191,71 @@ well-organized with short headers, and avoid being repetitive with the JSON.
 """
 
 # ----------------------------------------------------------------------
-# ANTHROPIC CLIENT
+# LLM CLIENTS — free-tier backends: Groq (Llama 3.3 70B) and Google Gemini
 # ----------------------------------------------------------------------
-def get_api_key():
-    key = os.environ.get("ANTHROPIC_API_KEY")
-    if not key:
+def get_secret(name):
+    val = os.environ.get(name)
+    if not val:
         try:
-            key = st.secrets.get("ANTHROPIC_API_KEY", None)
+            val = st.secrets.get(name, None)
         except Exception:
-            key = None
-    return key
+            val = None
+    return val
 
 
-def get_client():
-    api_key = get_api_key()
-    if not api_key or anthropic is None:
-        return None
-    return anthropic.Anthropic(api_key=api_key)
+def get_groq_key():
+    return get_secret("GROQ_API_KEY")
 
 
-def ask_assistant(client, history, model="claude-sonnet-4-6", max_tokens=1800):
-    """Send full chat history + system prompt to Claude, return text response."""
-    messages = [{"role": m["role"], "content": m["content"]} for m in history if m["role"] in ("user", "assistant")]
-    response = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        system=HEAT_STRESS_KNOWLEDGE,
-        messages=messages,
-    )
-    parts = [b.text for b in response.content if getattr(b, "type", None) == "text"]
-    return "\n".join(parts)
+def get_gemini_key():
+    return get_secret("GEMINI_API_KEY")
+
+
+def get_client(provider):
+    """Return a ready-to-use client (or config) for the chosen provider, or None."""
+    if provider == "Groq (Llama 3.3 70B — free)":
+        key = get_groq_key()
+        if not key or Groq is None:
+            return None
+        return Groq(api_key=key)
+    elif provider == "Google Gemini (free tier)":
+        key = get_gemini_key()
+        if not key or genai is None:
+            return None
+        genai.configure(api_key=key)
+        return genai.GenerativeModel(
+            model_name="gemini-2.0-flash",
+            system_instruction=HEAT_STRESS_KNOWLEDGE,
+        )
+    return None
+
+
+def ask_assistant(client, provider, history, max_tokens=1800):
+    """Send full chat history + system prompt to the selected provider, return text."""
+    user_assistant_msgs = [m for m in history if m["role"] in ("user", "assistant")]
+
+    if provider == "Groq (Llama 3.3 70B — free)":
+        messages = [{"role": "system", "content": HEAT_STRESS_KNOWLEDGE}]
+        messages += [{"role": m["role"], "content": m["content"]} for m in user_assistant_msgs]
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            max_tokens=max_tokens,
+            messages=messages,
+        )
+        return response.choices[0].message.content
+
+    elif provider == "Google Gemini (free tier)":
+        # Gemini uses "user"/"model" roles and no separate system message in history
+        gem_history = []
+        for m in user_assistant_msgs[:-1]:
+            role = "model" if m["role"] == "assistant" else "user"
+            gem_history.append({"role": role, "parts": [m["content"]]})
+        chat = client.start_chat(history=gem_history)
+        last_msg = user_assistant_msgs[-1]["content"]
+        response = chat.send_message(last_msg)
+        return response.text
+
+    return "⚠️ No provider configured."
 
 
 def extract_json_block(text):
@@ -264,15 +306,27 @@ with st.sidebar:
         st.session_state["_pending_prompt"] = scenario_prompt
 
     st.markdown("---")
-    api_key_present = bool(get_api_key())
-    if not api_key_present:
+    st.markdown("## 🤖 LLM Backend")
+    provider = st.selectbox(
+        "Choose a free LLM backend",
+        ["Groq (Llama 3.3 70B — free)", "Google Gemini (free tier)"],
+        key="provider",
+    )
+    st.session_state["provider"] = provider
+
+    groq_present = bool(get_groq_key())
+    gemini_present = bool(get_gemini_key())
+    st.write(f"GROQ_API_KEY: {'✅ found' if groq_present else '❌ missing'}")
+    st.write(f"GEMINI_API_KEY: {'✅ found' if gemini_present else '❌ missing'}")
+    if (provider.startswith("Groq") and not groq_present) or (provider.startswith("Google") and not gemini_present):
         st.warning(
-            "No `ANTHROPIC_API_KEY` found. Add it under **Settings → Secrets** "
-            "on Streamlit Cloud, or as an environment variable locally, e.g.\n\n"
-            "`ANTHROPIC_API_KEY = \"sk-ant-...\"`"
+            "Selected backend's key is missing. Add it under **Settings → Secrets** "
+            "on Streamlit Cloud, or as an environment variable locally:\n\n"
+            "- Groq: get a free key at console.groq.com/keys → `GROQ_API_KEY = \"gsk_...\"`\n"
+            "- Gemini: get a free key at aistudio.google.com/apikey → `GEMINI_API_KEY = \"...\"`"
         )
     else:
-        st.success("Anthropic API key detected ✅")
+        st.success(f"{provider.split(' (')[0]} key detected ✅")
 
     if st.button("🗑️ Clear conversation", use_container_width=True):
         st.session_state["messages"] = []
@@ -433,7 +487,8 @@ user_input = st.chat_input("Describe a heat-stress scenario or ask a follow-up q
 prompt_to_send = pending or user_input
 
 if prompt_to_send:
-    client = get_client()
+    provider = st.session_state.get("provider", "Groq (Llama 3.3 70B — free)")
+    client = get_client(provider)
     st.session_state["messages"].append({"role": "user", "content": prompt_to_send})
     with st.chat_message("user"):
         st.markdown(prompt_to_send)
@@ -441,18 +496,18 @@ if prompt_to_send:
     with st.chat_message("assistant"):
         if client is None:
             error_msg = (
-                "I can't reach the Claude API because no valid `ANTHROPIC_API_KEY` is "
-                "configured. Add it under Streamlit Cloud **Settings → Secrets**, or set "
-                "it as a local environment variable, then try again."
+                f"I can't reach **{provider}** because no valid API key is configured "
+                f"for it. Add the matching key under Streamlit Cloud **Settings → Secrets** "
+                f"(or as a local environment variable), or switch providers in the sidebar."
             )
             st.error(error_msg)
             st.session_state["messages"].append({"role": "assistant", "content": error_msg, "prose": error_msg, "data": None, "ts": datetime.utcnow().isoformat()})
         else:
             with st.spinner("Analyzing against NIOSH / OSHA / ACGIH guidance..."):
                 try:
-                    raw_reply = ask_assistant(client, st.session_state["messages"])
+                    raw_reply = ask_assistant(client, provider, st.session_state["messages"])
                 except Exception as e:
-                    raw_reply = f"⚠️ Error calling the Claude API: {e}"
+                    raw_reply = f"⚠️ Error calling {provider}: {e}"
             data, prose = extract_json_block(raw_reply)
             st.markdown(prose if prose else raw_reply)
             ts = datetime.utcnow().isoformat()
