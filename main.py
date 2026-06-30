@@ -1,897 +1,487 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import warnings
+"""
+TR Heat Stress Advisor — LLM-powered Construction Heat Stress Assistant
+=========================================================================
+A Streamlit app where users describe a work scenario in natural language
+(or fill in parameters), an LLM (Claude) interprets it against NIOSH/OSHA/
+ACGIH heat-stress guidance, and the app renders structured recommendations
+plus Plotly visualizations (WBGT gauge, REL work/rest chart, risk timeline).
+
+Deploy: GitHub + Streamlit Community Cloud.
+Secrets required: ANTHROPIC_API_KEY (Settings -> Secrets on Streamlit Cloud,
+or a local .streamlit/secrets.toml file, or an environment variable).
+"""
+
 import os
-import requests
+import json
+import re
+from datetime import datetime
+
+import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from sklearn.neural_network import MLPRegressor
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import r2_score, mean_squared_error
-import json
-from datetime import datetime
-warnings.filterwarnings('ignore')
 
+try:
+    import anthropic
+except ImportError:
+    anthropic = None
+
+# ----------------------------------------------------------------------
+# PAGE CONFIG & STYLE
+# ----------------------------------------------------------------------
 st.set_page_config(
-    page_title="Heat Stress AI Assistant",
+    page_title="TR Heat Stress Advisor",
     page_icon="🌡️",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
-st.markdown("""
-<style>
-    .stApp {
-        background: #0d1117;
-    }
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: 700;
-        text-align: center;
-        background: linear-gradient(135deg, #58a6ff, #3fb950);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        padding: 1.5rem 0 0.3rem 0;
-        letter-spacing: -0.5px;
-    }
-    .sub-header {
-        text-align: center;
-        color: #8b949e;
-        font-size: 0.95rem;
-        margin-bottom: 1.5rem;
-    }
-    .chat-message {
-        padding: 1rem 1.5rem;
-        margin: 0.5rem 0;
-        border-radius: 8px;
-        line-height: 1.7;
-        font-size: 0.95rem;
-        animation: fadeIn 0.5s ease;
-    }
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(10px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-    .chat-message.user {
-        background: #1c2333;
-        border-left: 3px solid #58a6ff;
-        color: #e6edf3;
-    }
-    .chat-message.assistant {
-        background: #161b22;
-        border-left: 3px solid #3fb950;
-        color: #e6edf3;
-    }
-    .chat-message .role {
-        font-size: 0.7rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        margin-bottom: 0.3rem;
-    }
-    .chat-message.user .role {
-        color: #58a6ff;
-    }
-    .chat-message.assistant .role {
-        color: #3fb950;
-    }
-    .chat-message .content {
-        white-space: pre-wrap;
-    }
-    .chat-message .content strong {
-        color: #f0e6d0;
-    }
-    .chat-message .content ul, .chat-message .content ol {
-        margin: 0.5rem 0;
-        padding-left: 1.5rem;
-    }
-    .chat-message .content li {
-        margin: 0.2rem 0;
-    }
-    .input-container {
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        background: #0d1117;
-        padding: 1rem 2rem;
-        border-top: 1px solid #21262d;
-        z-index: 100;
-    }
-    .input-container .stTextInput > div > div > input {
-        background: #161b22 !important;
-        color: #e6edf3 !important;
-        border: 1px solid #30363d !important;
-        border-radius: 8px !important;
-        padding: 0.8rem 1rem !important;
-        font-size: 0.95rem !important;
-    }
-    .input-container .stTextInput > div > div > input:focus {
-        border-color: #58a6ff !important;
-        box-shadow: none !important;
-    }
-    .input-container .stTextInput > div > div > input::placeholder {
-        color: #8b949e;
-    }
-    .input-container .stButton > button {
-        background: #238636 !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 8px !important;
-        padding: 0.8rem 2rem !important;
-        font-weight: 600 !important;
-        transition: 0.2s !important;
-        width: 100%;
-    }
-    .input-container .stButton > button:hover {
-        background: #2ea043 !important;
-        transform: scale(1.02);
-    }
-    .status-badge {
-        display: inline-block;
-        padding: 0.2rem 0.8rem;
-        border-radius: 20px;
-        font-weight: 600;
-        font-size: 0.8rem;
-    }
-    .status-badge.critical { background: #da3633; color: white; }
-    .status-badge.high { background: #d29922; color: white; }
-    .status-badge.moderate { background: #d29922; color: white; }
-    .status-badge.low { background: #238636; color: white; }
-    .status-badge.comfortable { background: #238636; color: white; }
-    .divider {
-        border: none;
-        border-top: 1px solid #21262d;
-        margin: 1.5rem 0;
-    }
-    .footer {
-        text-align: center;
-        color: #8b949e;
-        font-size: 0.7rem;
-        padding: 1rem 0;
-    }
-    .stExpander {
-        background: #161b22;
-        border: 1px solid #21262d;
-        border-radius: 8px;
-    }
-    .stExpander > div {
-        color: #e6edf3;
-    }
-    .stMarkdown {
-        color: #e6edf3;
-    }
-    .stSidebar {
-        background: #0d1117;
-        border-right: 1px solid #21262d;
-    }
-    .stSidebar .stMarkdown {
-        color: #e6edf3;
-    }
-    .stNumberInput > div > div > input {
-        background: #161b22;
-        color: #e6edf3;
-        border: 1px solid #30363d;
-        border-radius: 6px;
-    }
-    .stSlider > div > div {
-        color: #e6edf3;
-    }
-    .stSelectSlider > div {
-        color: #e6edf3;
-    }
-    .stButton > button {
-        background: #21262d;
-        color: #e6edf3;
-        border: 1px solid #30363d;
-        border-radius: 6px;
-    }
-    .stButton > button:hover {
-        background: #30363d;
-    }
-    .stSelectbox > div > div {
-        background: #161b22;
-        color: #e6edf3;
-        border: 1px solid #30363d;
-    }
-    .plotly-container {
-        background: #161b22;
-        border-radius: 8px;
-        border: 1px solid #21262d;
-        padding: 0.5rem;
-        margin: 0.5rem 0;
-    }
-</style>
-""", unsafe_allow_html=True)
+st.markdown(
+    """
+    <style>
+    .stApp {background: linear-gradient(145deg,#0f2027 0%,#203a43 50%,#2c5364 100%);}
+    .main-header {font-size:2.4rem;font-weight:700;text-align:center;color:white;
+        padding:1.2rem;background:rgba(255,255,255,0.08);backdrop-filter:blur(12px);
+        border-radius:20px;margin-bottom:1.2rem;border:1px solid rgba(255,255,255,0.1);}
+    .risk-VERY-HIGH {background:linear-gradient(135deg,#8B0000,#FF0000);}
+    .risk-HIGH {background:linear-gradient(135deg,#FF4500,#FF8C00);}
+    .risk-MODERATE {background:linear-gradient(135deg,#FFA500,#FFD700);color:#222;}
+    .risk-LOW {background:linear-gradient(135deg,#006400,#228B22);}
+    .risk-box {padding:1.2rem;border-radius:16px;color:white;text-align:center;margin:.6rem 0;}
+    .risk-box h2 {margin:0;font-size:1.8rem;}
+    .rec-card {background:rgba(255,255,255,0.07);backdrop-filter:blur(8px);padding:1.1rem;
+        border-radius:14px;color:white;border:1px solid rgba(255,255,255,0.1);height:100%;}
+    .rec-card h4 {margin-top:0;border-bottom:2px solid rgba(255,255,255,0.2);padding-bottom:.4rem;}
+    .source-pill {display:inline-block;background:rgba(255,255,255,0.12);color:#9be8e0;
+        padding:2px 10px;border-radius:12px;font-size:11px;margin:2px 4px 2px 0;}
+    [data-testid="stChatMessage"] {background:rgba(255,255,255,0.05);border-radius:12px;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-# ============ DATA LOADING AND MODEL TRAINING ============
-def create_sample_data():
-    np.random.seed(42)
-    n_samples = 1000
-    T = np.random.uniform(20, 45, n_samples)
-    RH = np.random.uniform(30, 90, n_samples)
-    WS = np.random.uniform(0.1, 8, n_samples)
-    
-    PET = T + 5 - 0.8 * WS + 0.015 * (RH - 40) + np.random.normal(0, 1, n_samples)
-    PET = np.clip(PET, 20, 50)
-    
-    PMV = 1.5 + (T - 25) * 0.12 - 0.15 * WS + 0.02 * (RH - 40) + np.random.normal(0, 0.2, n_samples)
-    PMV = np.clip(PMV, 0, 4)
-    
-    PPD = 5 + 85 * (1 - np.exp(-0.5 * (PMV - 1)))
-    SET = PET - 1 + np.random.normal(0, 0.5, n_samples)
-    RWS = WS * 0.8 + np.random.normal(0, 0.2, n_samples)
-    CE = 2 + 0.5 * WS + np.random.normal(0, 0.3, n_samples)
-    Height = np.random.uniform(0, 100, n_samples)
-    PETH = PET - np.random.uniform(0, 6, n_samples)
-    PMVH = PMV - np.random.uniform(0, 1, n_samples)
-    
-    # Productivity data
-    productivity = 100 - (PET - 20) * 0.5 - (RH - 40) * 0.1 + WS * 2 + np.random.normal(0, 5, n_samples)
-    productivity = np.clip(productivity, 20, 100)
-    
-    df = pd.DataFrame({
-        'T': T, 'RH': RH, 'WS': WS, 'PET': PET, 'PMV': PMV,
-        'PPD': PPD, 'SET': SET, 'RWS': RWS, 'CE': CE,
-        'Height': Height, 'PETH': PETH, 'PMVH': PMVH,
-        'Productivity': productivity
-    })
-    return df
+st.markdown('<div class="main-header">🌡️ TR Heat Stress Advisor — AI Assistant</div>', unsafe_allow_html=True)
+st.caption(
+    "Describe a work scenario in plain language (e.g. *'It's 35°C and 70% humidity, "
+    "crew is doing heavy rebar tying in direct sun, what should we do?'*) or fill in the "
+    "sidebar parameters. The assistant reasons using NIOSH, OSHA, and ACGIH heat-stress "
+    "guidance and returns a risk assessment, recommendations, and visualizations."
+)
 
-CSV_PATH = "EXBD.csv"
+# ----------------------------------------------------------------------
+# KNOWLEDGE BASE — condensed NIOSH / OSHA / ACGIH guidance
+# This is embedded in the system prompt so the LLM grounds its answers
+# in real standards instead of hallucinating thresholds.
+# ----------------------------------------------------------------------
+HEAT_STRESS_KNOWLEDGE = r"""
+You are TR Heat Stress Advisor, an expert occupational safety assistant specializing in
+heat stress in construction and outdoor manual labor. Ground every answer in the
+following condensed reference material (NIOSH, OSHA, ACGIH). Cite the source body
+(NIOSH / OSHA / ACGIH) inline when you state a threshold or recommendation.
 
-if not os.path.exists(CSV_PATH):
-    df = create_sample_data()
-    df.to_csv(CSV_PATH, index=False)
-else:
-    try:
-        df = pd.read_csv(CSV_PATH, encoding='utf-8')
-    except:
-        df = create_sample_data()
+=== 1. WBGT (Wet Bulb Globe Temperature) — NIOSH / ACGIH Work-Rest & TLV framework ===
+WBGT (°C) is the primary metric for heat-stress action levels. Work is categorized by
+metabolic workload into four classes, each with its own WBGT Recommended Alert Limit
+(REL, unacclimatized) and Threshold Limit Value (TLV, acclimatized), assuming standard
+light clothing (clo ~0.6) and ~25%/75% to 100% work/rest cycles as applicable:
+  - Light work (~200 W / ~2.0-2.5 met, e.g. sitting/standing light hand work):
+      Unacclimatized REL ≈ 27.5°C WBGT (100% work); Acclimatized TLV ≈ 29.5°C WBGT
+  - Moderate work (~300 W / ~3.0 met, e.g. walking, moderate lifting):
+      Unacclimatized REL ≈ 26.0°C WBGT (100% work); Acclimatized TLV ≈ 27.5°C WBGT
+  - Heavy work (~400 W / ~3.5-4.0 met, e.g. shoveling, heavy lifting, rebar/formwork):
+      Unacclimatized REL ≈ 25.0°C WBGT (100% work); Acclimatized TLV ≈ 26.0°C WBGT
+  - Very heavy work (~500+ W / ~4.5+ met, e.g. continuous heavy manual labor):
+      Unacclimatized REL ≈ 23.0°C WBGT (100% work); Acclimatized TLV ≈ 25.0°C WBGT
+As WBGT rises above these levels, NIOSH/ACGIH prescribe progressively shorter work
+cycles with rest in the shade: 75%, 50%, then 25% work-per-hour tiers, derived from the
+ACGIH TLV work/rest table. Add ~+1°C WBGT credit for light/permeable clothing acclimatized
+workers in good condition; subtract for impermeable PPE.
 
-# Create dataframe with available columns
-hs_df_dict = {
-    'T(0C)': pd.to_numeric(df['T'], errors='coerce') if 'T' in df.columns else None,
-    'RH(%)': pd.to_numeric(df['RH'], errors='coerce') if 'RH' in df.columns else None,
-    'WS(m/s)': pd.to_numeric(df['WS'], errors='coerce') if 'WS' in df.columns else None,
-    'PET(0C)': pd.to_numeric(df['PET'], errors='coerce') if 'PET' in df.columns else None,
-    'PMV': pd.to_numeric(df['PMV'], errors='coerce') if 'PMV' in df.columns else None,
-    'PPD(%)': pd.to_numeric(df['PPD'], errors='coerce') if 'PPD' in df.columns else None,
-    'SET (0C)': pd.to_numeric(df['SET'], errors='coerce') if 'SET' in df.columns else None,
-    'RWS(m/s)': pd.to_numeric(df['RWS'], errors='coerce') if 'RWS' in df.columns else None,
-    'CE(0C)': pd.to_numeric(df['CE'], errors='coerce') if 'CE' in df.columns else None,
+=== 2. OSHA Heat Illness Prevention Program (General Duty Clause + NEP) ===
+OSHA does not (as of the assistant's training) have a single finalized federal heat
+standard but enforces heat-illness prevention via the General Duty Clause and a National
+Emphasis Program. Core required/expected elements:
+  - Water: cool drinking water accessible within a short walk of every work area.
+  - Rest: shaded or air-conditioned rest areas; scheduled rest breaks scaled to heat risk.
+  - Shade: required when temperatures approach/exceed ~80°F (27°C) heat index per many
+    state plans (e.g., Cal/OSHA, Oregon OSHA, Washington L&I) used as reference practice.
+  - Acclimatization: new or returning workers build heat tolerance gradually — no more
+    than ~20% of normal workload/duration on day 1, increasing ~20%/day over 7-14 days.
+  - Training: supervisors and workers trained to recognize heat illness signs/symptoms.
+  - High-Heat Procedures (state-plan model, e.g. Cal/OSHA at ≥95°F / ~35°C): mandatory
+    10-min paid cool-down break every 2 hours, mandatory buddy system / observation,
+    pre-shift safety meeting.
+  - Emergency response: clear procedure to summon help for suspected heat stroke;
+    heat stroke is a medical emergency (call 911 / EMS, active cooling, do not wait).
+
+=== 3. NIOSH Heat Index / Risk-Level Tiers (parallel framework, °F/°C) ===
+  - Caution (80-90°F / 27-32°C heat index): fatigue possible with prolonged exposure.
+  - Extreme Caution (90-103°F / 32-39°C): heat cramps/exhaustion possible.
+  - Danger (103-124°F / 39-51°C): heat cramps/exhaustion likely, heat stroke possible
+    with prolonged exposure/activity.
+  - Extreme Danger (>124°F / >51°C): heat stroke highly likely.
+
+=== 4. Heat illness spectrum (for explaining "why") ===
+  - Heat rash / heat cramps: earliest signs, muscle cramps from electrolyte loss.
+  - Heat syncope: fainting, often early in unacclimatized workers.
+  - Heat exhaustion: heavy sweating, weakness, cool/clammy skin, nausea, headache,
+    dizziness — core temp usually <40°C. Move to cool area, hydrate, remove excess
+    clothing; if not improving in 30 min, seek medical care.
+  - Heat stroke: core temp >40°C (104°F), altered mental status, hot/dry OR sweaty skin,
+    rapid pulse — MEDICAL EMERGENCY. Call EMS immediately, cool aggressively
+    (ice water immersion is gold standard), do not give fluids if unconscious.
+
+=== 5. Productivity-loss framing (engineering/management context) ===
+Construction productivity loss tends to follow a roughly exponential-saturating curve
+above each work type's "allowable" thermal threshold (PET or WBGT alert level): minimal
+loss near the threshold, rising sharply and saturating around 25-30% loss in the most
+severe sustained-heat conditions for heavy manual tasks. Lighter cognitive/seated tasks
+degrade less from heat than heavy dynamic labor.
+
+=== 6. Clothing & metabolic adjustments ===
+  - clo insulation: 0.36 (light summer) to 1.0+ (coveralls/PPE); each ~0.1 clo above
+    baseline behaves like a few-degree WBGT/PET penalty for heat dissipation.
+  - met (metabolic rate): rest ~1.0-1.2 met; light work ~2.0-2.5; moderate ~2.6-3.5;
+    heavy ~3.5-4.5; very heavy >4.5. Higher met sharply increases internal heat
+    production and required evaporative cooling capacity.
+
+=== YOUR TASK ===
+Given a user's natural-language scenario or explicit parameters (temperature, relative
+humidity, wind speed, sun/shade exposure, clothing, activity/metabolic level, duration,
+acclimatization status, age/health factors if mentioned), you must:
+  1. Extract/estimate the relevant parameters (state any assumptions explicitly).
+  2. Estimate WBGT if not given (rough outdoor-sun approximation acceptable; state it's
+     an estimate) and classify the work/rest tier and risk level.
+  3. Classify overall risk as one of: LOW, MODERATE, HIGH, VERY HIGH.
+  4. Explain WHY in terms of the specific thresholds crossed (NIOSH/OSHA/ACGIH), in
+     plain, practical language a site safety manager or worker could act on immediately.
+  5. Give concrete, role-specific recommendations (site manager actions; worker actions):
+     hydration cadence, work/rest cycle, shade/cooling, PPE/clothing, monitoring/buddy
+     system, and when to escalate/stop work.
+  6. ALWAYS finish your reply with a single fenced ```json code block (and nothing after
+     it) containing a structured object so the app can render charts, using this exact
+     schema (use your best numeric estimates; use null only if truly unknowable):
+{
+  "risk_level": "LOW | MODERATE | HIGH | VERY HIGH",
+  "wbgt_c": <number>,
+  "heat_index_c": <number or null>,
+  "temperature_c": <number>,
+  "relative_humidity_pct": <number>,
+  "wind_speed_ms": <number or null>,
+  "clo": <number>,
+  "met": <number>,
+  "work_type": "Rest|Light|Moderate|Heavy|Very Heavy",
+  "rel_threshold_wbgt_c": <number>,
+  "tlv_threshold_wbgt_c": <number>,
+  "recommended_work_pct_per_hour": <25|50|75|100>,
+  "estimated_productivity_loss_pct": <number 0-30>,
+  "manager_actions": ["...", "..."],
+  "worker_actions": ["...", "..."],
+  "warning_signs": ["...", "..."],
+  "sources": ["NIOSH", "OSHA", "ACGIH"]
 }
-
-# Remove None values
-hs_df_dict = {k: v for k, v in hs_df_dict.items() if v is not None}
-hs_df = pd.DataFrame(hs_df_dict).dropna()
-
-# Height data
-bh_df = pd.DataFrame({
-    'Height(m)': pd.to_numeric(df['Height'], errors='coerce') if 'Height' in df.columns else None,
-    'PET(0C)': pd.to_numeric(df['PETH'], errors='coerce') if 'PETH' in df.columns else None,
-    'PMV': pd.to_numeric(df['PMVH'], errors='coerce') if 'PMVH' in df.columns else None
-})
-
-bh_df = bh_df.dropna()
-if len(bh_df) > 0:
-    bh_df = bh_df[bh_df['Height(m)'] > 0].sort_values('Height(m)')
-
-# If no data, create sample
-if len(hs_df) == 0:
-    df = create_sample_data()
-    hs_df = pd.DataFrame({
-        'T(0C)': df['T'],
-        'RH(%)': df['RH'],
-        'WS(m/s)': df['WS'],
-        'PET(0C)': df['PET'],
-        'PMV': df['PMV'],
-        'PPD(%)': df['PPD'],
-        'SET (0C)': df['SET'],
-        'RWS(m/s)': df['RWS'],
-        'CE(0C)': df['CE']
-    })
-
-# ============ TRAIN MULTIPLE MODELS ============
-features = ['T(0C)', 'RH(%)', 'WS(m/s)']
-available_targets = ['PET(0C)', 'PMV', 'PPD(%)', 'SET (0C)', 'RWS(m/s)', 'CE(0C)']
-
-X = hs_df[features].values
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
-
-models = {}
-model_scores = {}
-
-for target in available_targets:
-    if target in hs_df.columns:
-        y = hs_df[target].values
-        
-        models[target] = {}
-        
-        # Neural Network
-        nn = MLPRegressor(
-            hidden_layer_sizes=(128, 64, 32),
-            activation='relu',
-            solver='adam',
-            alpha=0.001,
-            max_iter=500,
-            random_state=42,
-            early_stopping=True,
-            n_iter_no_change=10
-        )
-        nn.fit(X_scaled, y)
-        models[target]['nn'] = nn
-        
-        # Random Forest
-        rf = RandomForestRegressor(
-            n_estimators=100,
-            max_depth=10,
-            random_state=42
-        )
-        rf.fit(X_scaled, y)
-        models[target]['rf'] = rf
-        
-        # Linear Regression
-        lr = LinearRegression()
-        lr.fit(X_scaled, y)
-        models[target]['lr'] = lr
-        
-        model_scores[target] = {
-            'nn': r2_score(y, nn.predict(X_scaled)),
-            'rf': r2_score(y, rf.predict(X_scaled)),
-            'lr': r2_score(y, lr.predict(X_scaled))
-        }
-
-# ============ WORK DATA ============
-work_data = {
-    "Rest (R)": {"M": 115, "PET_AL": 35, "description": "Sitting", "base_factor": 0.15},
-    "Light (LW)": {"M": 180, "PET_AL": 35.5, "description": "Light hand work", "base_factor": 0.20},
-    "Moderate (MW)": {"M": 300, "PET_AL": 32, "description": "Moderate lifting", "base_factor": 0.25},
-    "Heavy (HW)": {"M": 415, "PET_AL": 31, "description": "Heavy lifting", "base_factor": 0.28},
-    "Very Heavy (VHW)": {"M": 520, "PET_AL": 30, "description": "Very intense", "base_factor": 0.30}
-}
-
-activity_to_work = {
-    2.1: "Light (LW)", 2.2: "Light (LW)", 2.6: "Moderate (MW)",
-    3.2: "Heavy (HW)", 3.8: "Heavy (HW)", 4.0: "Very Heavy (VHW)"
-}
-
-# ============ HELPER FUNCTIONS ============
-def calc_productivity_loss(pet_value, work_type_key, baseline):
-    work = work_data[work_type_key]
-    PET_AL = work["PET_AL"]
-    base_factor = work["base_factor"]
-    if pet_value <= PET_AL:
-        return 0
-    else:
-        delta_pet = pet_value - PET_AL
-        PL = 30 * (1 - np.exp(-base_factor * delta_pet))
-        return min(PL, 30)
-
-def get_thermal_risk_level(pet):
-    if pet > 41.0:
-        return "CRITICAL", "Immediate work stoppage required", "🔴", "critical"
-    elif pet > 35.0:
-        return "HIGH", "Severe heat strain - reduced work capacity", "🟠", "high"
-    elif pet > 29.0:
-        return "MODERATE", "Elevated heat stress - monitoring required", "🟡", "moderate"
-    elif pet > 23.0:
-        return "LOW", "Mild heat stress - standard precautions", "🟢", "low"
-    else:
-        return "COMFORTABLE", "Optimal working conditions", "✅", "comfortable"
-
-def get_pmv_interpretation(pmv):
-    if pmv >= 3.0:
-        return "SEVERE DISCOMFORT"
-    elif pmv >= 2.5:
-        return "VERY UNCOMFORTABLE"
-    elif pmv >= 2.0:
-        return "MODERATE DISCOMFORT"
-    elif pmv >= 1.5:
-        return "MILD DISCOMFORT"
-    elif pmv >= 1.0:
-        return "SLIGHT WARMTH"
-    else:
-        return "COMFORTABLE"
-
-def get_height_profile(ground_pet, ground_pmv, height_m, bh_df):
-    if len(bh_df) == 0:
-        return None
-    heights_original = bh_df['Height(m)'].values
-    pet_pattern = bh_df['PET(0C)'].values.copy()
-    pmv_pattern = bh_df['PMV'].values.copy() if 'PMV' in bh_df.columns else pet_pattern * 0.08
-    for i in range(1, len(pet_pattern)):
-        if pet_pattern[i] > pet_pattern[i-1]:
-            pet_pattern[i] = max(pet_pattern[i-1] - 0.1, 0)
-    for i in range(1, len(pmv_pattern)):
-        if pmv_pattern[i] > pmv_pattern[i-1]:
-            pmv_pattern[i] = max(pmv_pattern[i-1] - 0.01, -3)
-    if pet_pattern[0] != 0:
-        pet_relative = pet_pattern / pet_pattern[0]
-    else:
-        pet_relative = pet_pattern
-    if pmv_pattern[0] != 0:
-        pmv_relative = pmv_pattern / pmv_pattern[0]
-    else:
-        pmv_relative = pmv_pattern
-    pet_profile = ground_pet * pet_relative
-    pmv_profile = ground_pmv * pmv_relative
-    heights_smooth = np.linspace(0, 100, 100)
-    pet_smooth = np.interp(heights_smooth, heights_original, pet_profile)
-    pmv_smooth = np.interp(heights_smooth, heights_original, pmv_profile)
-    if 0 <= height_m <= 100:
-        pet_at_height = np.interp(height_m, heights_smooth, pet_smooth)
-        pmv_at_height = np.interp(height_m, heights_smooth, pmv_smooth)
-    else:
-        pet_at_height = ground_pet
-        pmv_at_height = ground_pmv
-    pet_at_100 = np.interp(100, heights_smooth, pet_smooth)
-    pmv_at_100 = np.interp(100, heights_smooth, pmv_smooth)
-    return {
-        'pet_at_height': pet_at_height,
-        'pmv_at_height': pmv_at_height,
-        'pet_at_100': pet_at_100,
-        'pmv_at_100': pmv_at_100,
-        'pet_profile': pet_smooth,
-        'pmv_profile': pmv_smooth,
-        'heights': heights_smooth,
-        'reduction': ground_pet - pet_at_height,
-        'lapse_rate': (ground_pet - pet_at_100) / 100 if height_m > 0 else 0
-    }
-
-def predict_with_best_model(target, input_scaled):
-    if target in models:
-        best_model = max(models[target].items(), key=lambda x: model_scores[target][x[0]])[0]
-        return models[target][best_model].predict(input_scaled)[0]
-    return 0
-
-def create_risk_chart(pet, pmv, ppd, productivity_loss):
-    fig = make_subplots(
-        rows=2, cols=2,
-        subplot_titles=("PET", "PMV", "PPD", "Productivity Loss"),
-        specs=[[{"type": "indicator"}, {"type": "indicator"}],
-               [{"type": "indicator"}, {"type": "indicator"}]]
-    )
-    
-    fig.add_trace(
-        go.Indicator(
-            mode="gauge+number",
-            value=pet,
-            title={'text': "°C"},
-            domain={'x': [0, 1], 'y': [0, 1]},
-            gauge={
-                'axis': {'range': [20, 50], 'tickwidth': 1, 'tickcolor': "white"},
-                'bar': {'color': "#f85149" if pet > 35 else "#d29922" if pet > 29 else "#3fb950"},
-                'steps': [
-                    {'range': [20, 23], 'color': "rgba(63,185,80,0.2)"},
-                    {'range': [23, 29], 'color': "rgba(63,185,80,0.3)"},
-                    {'range': [29, 35], 'color': "rgba(210,153,34,0.3)"},
-                    {'range': [35, 41], 'color': "rgba(248,81,73,0.3)"},
-                    {'range': [41, 50], 'color': "rgba(248,81,73,0.5)"}
-                ],
-                'threshold': {
-                    'line': {'color': "white", 'width': 4},
-                    'thickness': 0.75,
-                    'value': pet
-                }
-            }
-        ),
-        row=1, col=1
-    )
-    
-    fig.add_trace(
-        go.Indicator(
-            mode="gauge+number",
-            value=pmv,
-            title={'text': ""},
-            domain={'x': [0, 1], 'y': [0, 1]},
-            gauge={
-                'axis': {'range': [0, 3.5], 'tickwidth': 1, 'tickcolor': "white"},
-                'bar': {'color': "#f85149" if pmv > 2.5 else "#d29922" if pmv > 1.5 else "#3fb950"},
-                'steps': [
-                    {'range': [0, 1], 'color': "rgba(63,185,80,0.2)"},
-                    {'range': [1, 1.5], 'color': "rgba(63,185,80,0.3)"},
-                    {'range': [1.5, 2.5], 'color': "rgba(210,153,34,0.3)"},
-                    {'range': [2.5, 3.5], 'color': "rgba(248,81,73,0.3)"}
-                ],
-                'threshold': {
-                    'line': {'color': "white", 'width': 4},
-                    'thickness': 0.75,
-                    'value': pmv
-                }
-            }
-        ),
-        row=1, col=2
-    )
-    
-    fig.add_trace(
-        go.Indicator(
-            mode="gauge+number",
-            value=ppd,
-            title={'text': "%"},
-            domain={'x': [0, 1], 'y': [0, 1]},
-            gauge={
-                'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "white"},
-                'bar': {'color': "#f85149" if ppd > 50 else "#d29922" if ppd > 25 else "#3fb950"},
-                'steps': [
-                    {'range': [0, 25], 'color': "rgba(63,185,80,0.2)"},
-                    {'range': [25, 50], 'color': "rgba(210,153,34,0.3)"},
-                    {'range': [50, 100], 'color': "rgba(248,81,73,0.3)"}
-                ],
-                'threshold': {
-                    'line': {'color': "white", 'width': 4},
-                    'thickness': 0.75,
-                    'value': ppd
-                }
-            }
-        ),
-        row=2, col=1
-    )
-    
-    fig.add_trace(
-        go.Indicator(
-            mode="gauge+number",
-            value=productivity_loss,
-            title={'text': "%"},
-            domain={'x': [0, 1], 'y': [0, 1]},
-            gauge={
-                'axis': {'range': [0, 30], 'tickwidth': 1, 'tickcolor': "white"},
-                'bar': {'color': "#f85149" if productivity_loss > 20 else "#d29922" if productivity_loss > 10 else "#3fb950"},
-                'steps': [
-                    {'range': [0, 10], 'color': "rgba(63,185,80,0.2)"},
-                    {'range': [10, 20], 'color': "rgba(210,153,34,0.3)"},
-                    {'range': [20, 30], 'color': "rgba(248,81,73,0.3)"}
-                ],
-                'threshold': {
-                    'line': {'color': "white", 'width': 4},
-                    'thickness': 0.75,
-                    'value': productivity_loss
-                }
-            }
-        ),
-        row=2, col=2
-    )
-    
-    fig.update_layout(
-        template='plotly_dark',
-        height=400,
-        showlegend=False,
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color='white', size=11)
-    )
-    
-    return fig
-
-def create_height_chart(height_profile):
-    if not height_profile:
-        return None
-    
-    fig = go.Figure()
-    
-    fig.add_trace(go.Scatter(
-        x=height_profile['heights'],
-        y=height_profile['pet_profile'],
-        mode='lines',
-        name='PET',
-        line=dict(color='#3fb950', width=3),
-        fill='tozeroy',
-        fillcolor='rgba(63,185,80,0.1)'
-    ))
-    
-    fig.add_hline(y=41, line_dash="dash", line_color="#f85149", annotation_text="Critical")
-    fig.add_hline(y=35, line_dash="dash", line_color="#d29922", annotation_text="High")
-    fig.add_hline(y=29, line_dash="dash", line_color="#d29922", annotation_text="Moderate")
-    
-    fig.update_layout(
-        title="Vertical Temperature Profile",
-        xaxis_title="Height (m)",
-        yaxis_title="PET (°C)",
-        template='plotly_dark',
-        height=250,
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color='white'),
-        hovermode='x'
-    )
-    
-    return fig
-
-def get_llm_response(question, context, api_key, api_type="openai"):
-    if not api_key:
-        return None, "Please enter your API key"
-    
-    system_prompt = """You are a construction heat stress and productivity expert. You have been trained on heat stress data and can answer questions about:
-    - Heat stress indicators (PET, PMV, PPD, SET, RWS, CE)
-    - Productivity loss and optimization
-    - Work-rest schedules
-    - Height effects on temperature
-    - Risk assessment and mitigation
-    - Construction worker safety
-    
-    Provide clear, detailed, and actionable answers. Use the provided context data. Include bullet points, specific numbers, and practical recommendations. Be professional and helpful."""
-    
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "system", "content": f"Current Site Context: {context}"},
-        {"role": "user", "content": question}
-    ]
-    
-    try:
-        if api_type == "openai":
-            import openai
-            client = openai.OpenAI(api_key=api_key)
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=messages,
-                temperature=0.7,
-                max_tokens=1000
-            )
-            return response.choices[0].message.content, None
-        elif api_type == "deepseek":
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            data = {
-                "model": "deepseek-chat",
-                "messages": messages,
-                "temperature": 0.7,
-                "max_tokens": 1000
-            }
-            response = requests.post(
-                "https://api.deepseek.com/v1/chat/completions",
-                headers=headers,
-                json=data,
-                timeout=30
-            )
-            if response.status_code == 200:
-                return response.json()['choices'][0]['message']['content'], None
-            else:
-                return None, f"API Error: {response.status_code}"
-        else:
-            return None, "Unsupported API type"
-    except Exception as e:
-        return None, f"Error: {str(e)}"
-
-def generate_sample_questions():
-    return [
-        "What is my current heat stress risk level and why?",
-        "How much productivity loss can I expect?",
-        "What work-rest schedule should I implement?",
-        "How does working at height affect my heat stress?",
-        "What are the main factors causing my heat stress?",
-        "How can I reduce heat stress on my construction site?"
-    ]
-
-# ============ SESSION STATE ============
-if 'messages' not in st.session_state:
-    st.session_state.messages = []
-if 'has_results' not in st.session_state:
-    st.session_state.has_results = False
-if 'current_results' not in st.session_state:
-    st.session_state.current_results = None
-if 'context_data' not in st.session_state:
-    st.session_state.context_data = None
-
-# ============ MAIN UI ============
-st.markdown('<div class="main-header">🌡️ Heat Stress AI Assistant</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Powered by AI · Trained on construction heat stress data</div>', unsafe_allow_html=True)
-
-# Sidebar
-with st.sidebar:
-    st.markdown("### 📊 Input Data")
-    st.markdown("---")
-    
-    st.markdown("#### 🌤️ Environmental")
-    T = st.number_input("Temperature (°C)", 20.0, 50.0, 34.0, 0.1)
-    RH = st.number_input("Humidity (%)", 0.0, 100.0, 65.0, 1.0)
-    WS = st.number_input("Wind Speed (m/s)", 0.0, 10.0, 1.5, 0.1)
-    
-    st.markdown("#### 👷 Personal")
-    clo = st.select_slider("Clothing (clo)", options=[0.36, 0.50, 0.57, 0.61, 0.96, 1.00], value=0.57)
-    met = st.select_slider("Activity (met)", options=[2.1, 2.2, 2.6, 3.2, 3.8, 4.0], value=3.2)
-    height = st.slider("Working Height (m)", 0, 100, 0, 1)
-    baseline_productivity = st.number_input("Baseline Output (units/hr)", min_value=1.0, value=100.0, step=5.0)
-    
-    st.markdown("---")
-    st.markdown("#### 🤖 AI Model")
-    api_type = st.selectbox("AI Provider", ["openai", "deepseek"], index=0)
-    api_key = st.text_input("API Key", type="password", placeholder="Enter your API key")
-    if api_key:
-        st.session_state.api_key = api_key
-    
-    if st.button("🔄 Update Data & Analyze", use_container_width=True):
-        input_data = np.array([[T, RH, WS]])
-        input_scaled = scaler.transform(input_data)
-        
-        predictions = {}
-        for target in available_targets:
-            predictions[target] = predict_with_best_model(target, input_scaled)
-        
-        predictions['PET(0C)'] = np.clip(predictions['PET(0C)'] + clo * 0.5 + (met - 2.0) * 0.3, 20, 50)
-        predictions['PMV'] = np.clip(predictions['PMV'] + clo * 0.3 + (met - 2.0) * 0.2, 0, 3.5)
-        predictions['PPD(%)'] = np.clip(predictions['PPD(%)'] + clo * 2 + (met - 2.0) * 1.5, 5, 90)
-        
-        ground_pet = predictions["PET(0C)"]
-        ground_pmv = predictions["PMV"]
-        ground_ppd = predictions['PPD(%)']
-        
-        height_profile = get_height_profile(ground_pet, ground_pmv, height, bh_df)
-        risk_level, risk_desc, risk_icon, risk_class = get_thermal_risk_level(ground_pet)
-        pmv_interpretation = get_pmv_interpretation(ground_pmv)
-        current_work_key = activity_to_work.get(met, "Heavy (HW)")
-        pet_effective = height_profile['pet_at_height'] if height_profile else ground_pet
-        productivity_loss = calc_productivity_loss(pet_effective, current_work_key, baseline_productivity)
-        
-        st.session_state.current_results = {
-            'T': T, 'RH': RH, 'WS': WS, 'clo': clo, 'met': met, 'height': height,
-            'ground_pet': ground_pet, 'ground_pmv': ground_pmv, 'ground_ppd': ground_ppd,
-            'productivity_loss': productivity_loss,
-            'risk_level': risk_level, 'risk_desc': risk_desc, 'risk_icon': risk_icon,
-            'risk_class': risk_class, 'pmv_interpretation': pmv_interpretation,
-            'current_work_key': current_work_key, 'height_profile': height_profile,
-            'baseline_productivity': baseline_productivity, 'predictions': predictions
-        }
-        
-        st.session_state.context_data = f"""
-        Site Conditions:
-        - Temperature: {T:.1f}°C
-        - Humidity: {RH:.0f}%
-        - Wind Speed: {WS:.1f} m/s
-        - Working Height: {height}m
-        - Clothing: {clo:.2f} clo
-        - Activity: {met:.1f} met ({current_work_key})
-        - Baseline Productivity: {baseline_productivity:.0f} units/hr
-
-        Results:
-        - PET: {ground_pet:.1f}°C ({risk_level} risk - {risk_desc})
-        - PMV: {ground_pmv:.2f} ({pmv_interpretation})
-        - PPD: {ground_ppd:.1f}%
-        - Productivity Loss: {productivity_loss:.1f}%
-        - Height Reduction: {height_profile['reduction']:.1f}°C at {height}m
-        """
-        
-        st.session_state.has_results = True
-        st.rerun()
-
-# ============ DISPLAY RESULTS ============
-if st.session_state.has_results and st.session_state.current_results:
-    r = st.session_state.current_results
-    
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("🌡️ PET", f"{r['ground_pet']:.1f}°C")
-    with col2:
-        st.metric("📊 PMV", f"{r['ground_pmv']:.2f}")
-    with col3:
-        st.metric("😓 PPD", f"{r['ground_ppd']:.1f}%")
-    with col4:
-        st.metric("📉 Loss", f"{r['productivity_loss']:.1f}%")
-    
-    st.markdown(f"""
-    <div style="text-align:center; margin:0.5rem 0;">
-        <span class="status-badge {r['risk_class']}">{r['risk_icon']} {r['risk_level']}</span>
-        <span style="color:#8b949e; margin-left:1rem;">{r['risk_desc']}</span>
-        <span style="color:#8b949e; margin-left:1rem;">|</span>
-        <span style="color:#8b949e; margin-left:1rem;">{r['pmv_interpretation']}</span>
-    </div>
-    <hr class="divider">
-    """, unsafe_allow_html=True)
-    
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        fig_risk = create_risk_chart(r['ground_pet'], r['ground_pmv'], r['ground_ppd'], r['productivity_loss'])
-        st.plotly_chart(fig_risk, use_container_width=True, config={'displayModeBar': False})
-    with col2:
-        if r['height_profile']:
-            fig_height = create_height_chart(r['height_profile'])
-            if fig_height:
-                st.plotly_chart(fig_height, use_container_width=True, config={'displayModeBar': False})
-        
-        with st.expander("📊 Model Performance", expanded=False):
-            st.markdown("**Best Models:**")
-            for target in available_targets:
-                if target in model_scores:
-                    best_model = max(model_scores[target].items(), key=lambda x: x[1])[0]
-                    st.text(f"{target}: {best_model.upper()} (R²={model_scores[target][best_model]:.3f})")
-
-# ============ CHAT INTERFACE ============
-st.markdown("### 💬 Ask Questions")
-
-for msg in st.session_state.messages:
-    role_class = "user" if msg["role"] == "user" else "assistant"
-    role_label = "You" if msg["role"] == "user" else "AI Assistant"
-    st.markdown(f"""
-    <div class="chat-message {role_class}">
-        <div class="role">{role_label}</div>
-        <div class="content">{msg["content"]}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-if not st.session_state.messages and st.session_state.has_results:
-    r = st.session_state.current_results
-    welcome = f"""**I've analyzed your site data. Here's the summary:**
-
-✅ **Risk Assessment:** {r['risk_icon']} {r['risk_level']} - {r['risk_desc']}
-🌡️ **PET:** {r['ground_pet']:.1f}°C (Threshold: 35°C for high risk)
-📊 **PMV:** {r['ground_pmv']:.2f} - {r['pmv_interpretation']}
-📉 **Productivity Loss:** {r['productivity_loss']:.1f}% for {r['current_work_key']}
-🏗️ **Height Effect:** {r['height_profile']['reduction']:.1f}°C reduction at {r['height']}m
-
-**I can answer questions about:**
-• Heat stress risk factors and mitigation
-• Productivity optimization strategies
-• Work-rest schedules and recommendations
-• Height effects and working conditions
-• Site-specific safety guidance
-
-**Try asking:** "What should I do to reduce heat stress?" or "Explain my productivity loss"
+Do not include any other text after the JSON block. Keep the prose portion focused,
+well-organized with short headers, and avoid being repetitive with the JSON.
 """
-    st.markdown(f"""
-    <div class="chat-message assistant">
-        <div class="role">AI Assistant</div>
-        <div class="content">{welcome}</div>
-    </div>
-    """, unsafe_allow_html=True)
 
-# ============ INPUT AREA ============
-with st.container():
-    col1, col2 = st.columns([5, 1])
-    with col1:
-        user_input = st.text_input(
-            "Ask a question about heat stress, productivity, or safety",
-            placeholder="e.g., What should I do to reduce heat stress?",
-            label_visibility="collapsed",
-            key="user_input"
+# ----------------------------------------------------------------------
+# ANTHROPIC CLIENT
+# ----------------------------------------------------------------------
+def get_api_key():
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        try:
+            key = st.secrets.get("ANTHROPIC_API_KEY", None)
+        except Exception:
+            key = None
+    return key
+
+
+def get_client():
+    api_key = get_api_key()
+    if not api_key or anthropic is None:
+        return None
+    return anthropic.Anthropic(api_key=api_key)
+
+
+def ask_assistant(client, history, model="claude-sonnet-4-6", max_tokens=1800):
+    """Send full chat history + system prompt to Claude, return text response."""
+    messages = [{"role": m["role"], "content": m["content"]} for m in history if m["role"] in ("user", "assistant")]
+    response = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=HEAT_STRESS_KNOWLEDGE,
+        messages=messages,
+    )
+    parts = [b.text for b in response.content if getattr(b, "type", None) == "text"]
+    return "\n".join(parts)
+
+
+def extract_json_block(text):
+    """Pull the trailing ```json ... ``` block out of the model's reply."""
+    match = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if not match:
+        match = re.search(r"(\{[^`]*\"risk_level\"[^`]*\})", text, re.DOTALL)
+    if not match:
+        return None, text
+    raw = match.group(1)
+    prose = text[: match.start()].strip()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None, text
+    return data, prose
+
+
+# ----------------------------------------------------------------------
+# SIDEBAR — optional structured inputs (auto-fills a prompt for the chat)
+# ----------------------------------------------------------------------
+with st.sidebar:
+    st.markdown("## ⚙️ Quick Scenario Builder")
+    st.caption("Fill these in and click 'Ask about this scenario', or just type a question in the chat instead.")
+
+    T = st.number_input("Temperature (°C)", 15.0, 50.0, 34.0, 0.5)
+    RH = st.number_input("Relative Humidity (%)", 0.0, 100.0, 65.0, 1.0)
+    WS = st.number_input("Wind Speed (m/s)", 0.0, 15.0, 1.5, 0.1)
+    sun = st.selectbox("Exposure", ["Direct sun", "Partial shade", "Full shade / indoor"])
+    clo = st.select_slider("Clothing insulation (clo)", options=[0.36, 0.5, 0.57, 0.61, 0.96, 1.0], value=0.57)
+    met_label = st.selectbox(
+        "Activity / work type",
+        ["Rest (~1.2 met)", "Light (~2.2 met)", "Moderate (~3.0 met)", "Heavy (~3.8 met)", "Very Heavy (~4.5 met)"],
+        index=3,
+    )
+    acclim = st.radio("Acclimatization", ["Acclimatized", "Unacclimatized / new worker"], horizontal=False)
+    duration = st.slider("Continuous task duration (min)", 10, 480, 120, 10)
+
+    if st.button("📋 Ask about this scenario", use_container_width=True):
+        scenario_prompt = (
+            f"Assess heat stress risk for this construction work scenario: "
+            f"Temperature {T}°C, Relative Humidity {RH}%, Wind Speed {WS} m/s, "
+            f"exposure: {sun}, clothing insulation {clo} clo, activity: {met_label}, "
+            f"worker acclimatization: {acclim}, planned continuous task duration: "
+            f"{duration} minutes. Give the risk level, the work/rest schedule, "
+            f"and recommendations."
         )
-    with col2:
-        send_button = st.button("Send", use_container_width=True)
+        st.session_state["_pending_prompt"] = scenario_prompt
 
-# Sample questions
-if not st.session_state.messages:
-    st.markdown("#### 🔍 Sample Questions")
-    sample_qs = generate_sample_questions()
-    cols = st.columns(3)
-    for i, q in enumerate(sample_qs[:6]):
-        with cols[i % 3]:
-            if st.button(q, key=f"sample_{i}", use_container_width=True):
-                user_input = q
-                st.rerun()
-
-# Process user input
-if send_button and user_input:
-    if not st.session_state.has_results:
-        st.error("⚠️ Please analyze your data first using the sidebar button")
-    elif not api_key:
-        st.error("⚠️ Please enter your API key in the sidebar")
+    st.markdown("---")
+    api_key_present = bool(get_api_key())
+    if not api_key_present:
+        st.warning(
+            "No `ANTHROPIC_API_KEY` found. Add it under **Settings → Secrets** "
+            "on Streamlit Cloud, or as an environment variable locally, e.g.\n\n"
+            "`ANTHROPIC_API_KEY = \"sk-ant-...\"`"
+        )
     else:
-        st.session_state.messages.append({"role": "user", "content": user_input})
-        
-        with st.spinner("🧠 Analyzing with AI..."):
-            response, error = get_llm_response(
-                user_input,
-                st.session_state.context_data,
-                api_key,
-                api_type
+        st.success("Anthropic API key detected ✅")
+
+    if st.button("🗑️ Clear conversation", use_container_width=True):
+        st.session_state["messages"] = []
+        st.session_state.pop("last_data", None)
+        st.rerun()
+
+
+# ----------------------------------------------------------------------
+# VISUALIZATION HELPERS
+# ----------------------------------------------------------------------
+RISK_COLORS = {"LOW": "#228B22", "MODERATE": "#FFD700", "HIGH": "#FF8C00", "VERY HIGH": "#FF0000"}
+
+
+def render_risk_box(data):
+    risk = data.get("risk_level", "MODERATE").upper().replace("_", " ")
+    css_class = f"risk-{risk.replace(' ', '-')}"
+    st.markdown(
+        f"""<div class="risk-box {css_class}">
+        <h2>🌡️ Risk Level: {risk}</h2>
+        <p>WBGT estimate: <b>{data.get('wbgt_c', 'N/A')}°C</b> &nbsp;|&nbsp;
+        Work type: <b>{data.get('work_type','N/A')}</b> &nbsp;|&nbsp;
+        Recommended work/hour: <b>{data.get('recommended_work_pct_per_hour','N/A')}%</b></p>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+
+def render_gauge(data):
+    wbgt = data.get("wbgt_c") or 0
+    tlv = data.get("tlv_threshold_wbgt_c") or 26
+    rel = data.get("rel_threshold_wbgt_c") or 25
+    fig = go.Figure(
+        go.Indicator(
+            mode="gauge+number",
+            value=wbgt,
+            number={"suffix": "°C", "font": {"color": "white"}},
+            title={"text": "WBGT vs. Action Limits", "font": {"color": "white", "size": 16}},
+            gauge={
+                "axis": {"range": [15, 45], "tickcolor": "white"},
+                "bar": {"color": "white", "thickness": 0.25},
+                "steps": [
+                    {"range": [15, rel], "color": "#228B22"},
+                    {"range": [rel, tlv], "color": "#FFD700"},
+                    {"range": [tlv, tlv + 3], "color": "#FF8C00"},
+                    {"range": [tlv + 3, 45], "color": "#8B0000"},
+                ],
+                "threshold": {"line": {"color": "white", "width": 3}, "thickness": 0.9, "value": wbgt},
+            },
+        )
+    )
+    fig.update_layout(
+        height=320, paper_bgcolor="rgba(0,0,0,0)", font={"color": "white"}, margin=dict(t=60, b=10, l=20, r=20)
+    )
+    return fig
+
+
+def render_workrest_bar(data):
+    pct = data.get("recommended_work_pct_per_hour", 100)
+    tiers = [100, 75, 50, 25]
+    colors = ["#228B22" if t >= pct else "rgba(255,255,255,0.15)" for t in tiers]
+    colors[tiers.index(pct)] = "#FF8C00" if pct < 100 else "#228B22"
+    fig = go.Figure(
+        go.Bar(
+            x=[f"{t}% work/hr" for t in tiers],
+            y=tiers,
+            marker_color=colors,
+            text=[f"{t}%" for t in tiers],
+            textposition="outside",
+        )
+    )
+    fig.update_layout(
+        title="ACGIH/NIOSH Work-Rest Cycle Tier",
+        template="plotly_dark",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="white"),
+        height=320,
+        yaxis_title="% of each hour spent working",
+        showlegend=False,
+    )
+    return fig
+
+
+def render_productivity_chart(data):
+    loss = data.get("estimated_productivity_loss_pct", 0) or 0
+    work_types = ["Light", "Moderate", "Heavy", "Very Heavy"]
+    base = {"Light": 0.4, "Moderate": 0.7, "Heavy": 1.0, "Very Heavy": 1.2}
+    current = data.get("work_type", "Heavy").split()[0]
+    vals = [round(loss * base.get(w, 1.0), 1) for w in work_types]
+    colors = ["#FF0000" if w == current else "#4ECDC4" for w in work_types]
+    fig = go.Figure(go.Bar(x=work_types, y=vals, marker_color=colors, text=[f"{v}%" for v in vals], textposition="auto"))
+    fig.update_layout(
+        title=f"Estimated Productivity Loss by Work Type (current: {current})",
+        template="plotly_dark",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="white"),
+        height=320,
+        yaxis_title="Productivity loss (%)",
+    )
+    return fig
+
+
+def render_recommendations(data):
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown('<div class="rec-card"><h4>🏗️ Site Manager Actions</h4>', unsafe_allow_html=True)
+        for item in data.get("manager_actions", []) or ["No data."]:
+            st.markdown(f"- {item}")
+        st.markdown("</div>", unsafe_allow_html=True)
+    with col2:
+        st.markdown('<div class="rec-card"><h4>👷 Worker Actions</h4>', unsafe_allow_html=True)
+        for item in data.get("worker_actions", []) or ["No data."]:
+            st.markdown(f"- {item}")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    if data.get("warning_signs"):
+        st.markdown('<div class="rec-card" style="margin-top:.6rem;"><h4>🚨 Warning Signs to Watch For</h4>', unsafe_allow_html=True)
+        for item in data["warning_signs"]:
+            st.markdown(f"- {item}")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    sources = data.get("sources", [])
+    if sources:
+        pills = "".join(f'<span class="source-pill">{s}</span>' for s in sources)
+        st.markdown(f"**Sources referenced:** {pills}", unsafe_allow_html=True)
+
+
+# ----------------------------------------------------------------------
+# CHAT STATE
+# ----------------------------------------------------------------------
+if "messages" not in st.session_state:
+    st.session_state["messages"] = []
+if "last_data" not in st.session_state:
+    st.session_state["last_data"] = None
+
+# Render past conversation
+for msg in st.session_state["messages"]:
+    if msg["role"] == "user":
+        with st.chat_message("user"):
+            st.markdown(msg["content"])
+    elif msg["role"] == "assistant":
+        with st.chat_message("assistant"):
+            st.markdown(msg.get("prose", msg["content"]))
+            if msg.get("data"):
+                render_risk_box(msg["data"])
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.plotly_chart(render_gauge(msg["data"]), use_container_width=True, key=f"gauge_{msg['ts']}")
+                with c2:
+                    st.plotly_chart(render_workrest_bar(msg["data"]), use_container_width=True, key=f"wr_{msg['ts']}")
+                st.plotly_chart(render_productivity_chart(msg["data"]), use_container_width=True, key=f"prod_{msg['ts']}")
+                render_recommendations(msg["data"])
+
+# Pull in sidebar-generated prompt if present
+pending = st.session_state.pop("_pending_prompt", None)
+user_input = st.chat_input("Describe a heat-stress scenario or ask a follow-up question...")
+prompt_to_send = pending or user_input
+
+if prompt_to_send:
+    client = get_client()
+    st.session_state["messages"].append({"role": "user", "content": prompt_to_send})
+    with st.chat_message("user"):
+        st.markdown(prompt_to_send)
+
+    with st.chat_message("assistant"):
+        if client is None:
+            error_msg = (
+                "I can't reach the Claude API because no valid `ANTHROPIC_API_KEY` is "
+                "configured. Add it under Streamlit Cloud **Settings → Secrets**, or set "
+                "it as a local environment variable, then try again."
             )
-        
-        if response:
-            st.session_state.messages.append({"role": "assistant", "content": response})
+            st.error(error_msg)
+            st.session_state["messages"].append({"role": "assistant", "content": error_msg, "prose": error_msg, "data": None, "ts": datetime.utcnow().isoformat()})
         else:
-            st.session_state.messages.append({"role": "assistant", "content": f"Error: {error}"})
-        
-        st.rerun()
+            with st.spinner("Analyzing against NIOSH / OSHA / ACGIH guidance..."):
+                try:
+                    raw_reply = ask_assistant(client, st.session_state["messages"])
+                except Exception as e:
+                    raw_reply = f"⚠️ Error calling the Claude API: {e}"
+            data, prose = extract_json_block(raw_reply)
+            st.markdown(prose if prose else raw_reply)
+            ts = datetime.utcnow().isoformat()
+            if data:
+                render_risk_box(data)
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.plotly_chart(render_gauge(data), use_container_width=True, key=f"gauge_{ts}")
+                with c2:
+                    st.plotly_chart(render_workrest_bar(data), use_container_width=True, key=f"wr_{ts}")
+                st.plotly_chart(render_productivity_chart(data), use_container_width=True, key=f"prod_{ts}")
+                render_recommendations(data)
+                st.session_state["last_data"] = data
+            st.session_state["messages"].append(
+                {"role": "assistant", "content": raw_reply, "prose": prose if prose else raw_reply, "data": data, "ts": ts}
+            )
 
-# Clear chat
-if st.session_state.messages:
-    if st.button("🗑️ Clear Chat", key="clear_chat"):
-        st.session_state.messages = []
-        st.rerun()
-
-st.markdown("""
-<div class="footer">
-    🌡️ Heat Stress AI Assistant · Trained on construction heat stress data · Ask any question
-</div>
-""", unsafe_allow_html=True)
+# ----------------------------------------------------------------------
+# FOOTER
+# ----------------------------------------------------------------------
+st.markdown("---")
+st.markdown(
+    """
+    <div style="text-align:center;color:rgba(255,255,255,0.6);font-size:13px;">
+    TR Heat Stress Advisor combines Claude (Anthropic) reasoning with condensed
+    NIOSH / OSHA / ACGIH heat-stress guidance. This tool supports — but does not
+    replace — a qualified safety professional's judgment and your organization's
+    heat illness prevention program. © 2026 Md. Tushar Ali, NJIT.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
