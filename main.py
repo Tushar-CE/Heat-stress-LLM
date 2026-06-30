@@ -312,7 +312,6 @@ with st.sidebar:
         ["Groq (Llama 3.3 70B — free)", "Google Gemini (free tier)"],
         key="provider",
     )
-    st.session_state["provider"] = provider
 
     groq_present = bool(get_groq_key())
     gemini_present = bool(get_gemini_key())
